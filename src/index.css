@@ -1,0 +1,77 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --bg-canvas: #FDFCF0;
+    --text-primary: #4A4A3A;
+    --text-secondary: #787664;
+    --brand-sage: #889E73;
+    --brand-sage-hover: #748B5F;
+    --brand-sage-light: #EBF0E5;
+    --brand-terracotta: #D98E73;
+    --brand-terracotta-light: #FAF0EC;
+    --brand-gold: #E8C07D;
+    --surface-card: #FFFFFF;
+    --surface-subtle: #F5F2ED;
+    --border-warm: #E5E1D5;
+  }
+
+  body {
+    font-family: 'Noto Sans KR', 'Outfit', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    color: #4A4A3A;
+    background-color: #FDFCF0;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  /* Custom scrollbar for natural tones */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: #F5F2ED;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: #D8D3C4;
+    border-radius: 9999px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #889E73;
+  }
+}
+
+@media print {
+  @page {
+    size: A4 portrait;
+    margin: 1.5cm;
+  }
+
+  body {
+    background-color: #ffffff !important;
+    color: #1a1a1a !important;
+  }
+
+  nav, header, footer, .print\:hidden {
+    display: none !important;
+  }
+
+  .book-print-container {
+    box-shadow: none !important;
+    border: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    max-width: 100% !important;
+    background-color: #ffffff !important;
+  }
+
+  .page-break {
+    page-break-before: always !important;
+    break-before: page !important;
+  }
+
+  .book-page {
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+}

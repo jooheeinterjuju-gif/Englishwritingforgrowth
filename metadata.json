@@ -1,0 +1,7 @@
+{
+  "name": "AI 단계별 영어 글쓰기",
+  "description": "중학교 1학년을 위한 AI 단계별 영어 글쓰기 및 성장 포트폴리오 웹앱",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+
