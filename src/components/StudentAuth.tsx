@@ -11,9 +11,9 @@ interface StudentAuthProps {
 
 export const StudentAuth: React.FC<StudentAuthProps> = ({ onLoginSuccess, onSwitchToTeacher }) => {
   const [gradeYear, setGradeYear] = useState('2026');
-  const [grade, setGrade] = useState(1);
-  const [classNum, setClassNum] = useState(1);
-  const [studentNum, setStudentNum] = useState(1);
+  const [grade, setGrade] = useState('');
+  const [classNum, setClassNum] = useState('');
+  const [studentNum, setStudentNum] = useState('');
   const [name, setName] = useState('');
   const [password, setPassword] = useState('');
 
@@ -27,14 +27,23 @@ export const StudentAuth: React.FC<StudentAuthProps> = ({ onLoginSuccess, onSwit
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
 
-  const studentKey = `${gradeYear}-${grade}-${classNum}-${String(studentNum).padStart(2, '0')}`;
-  const classId = `${gradeYear}-${grade}-${classNum}`;
+  const numGrade = Number(grade) || 0;
+  const numClass = Number(classNum) || 0;
+  const numStudent = Number(studentNum) || 0;
+
+  const studentKey = `${gradeYear}-${numGrade}-${numClass}-${String(numStudent).padStart(2, '0')}`;
+  const classId = `${gradeYear}-${numGrade}-${numClass}`;
 
   // Handle standard student login
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg('');
     setSuccessMsg('');
+
+    if (!grade || !classNum || !studentNum) {
+      setErrorMsg('학년, 반, 번호를 모두 입력해 주세요.');
+      return;
+    }
 
     if (!name.trim()) {
       setErrorMsg('이름을 입력해 주세요.');
@@ -46,7 +55,7 @@ export const StudentAuth: React.FC<StudentAuthProps> = ({ onLoginSuccess, onSwit
       // 1. Check if class exists
       const classDoc = await getClassById(classId);
       if (!classDoc) {
-        setErrorMsg(`${gradeYear}학년도 ${grade}학년 ${classNum}반이 아직 등록되지 않았습니다. 선생님께 학급 개설을 요청하거나 입력 정보를 확인해 주세요.`);
+        setErrorMsg(`${gradeYear}학년도 ${numGrade}학년 ${numClass}반이 아직 등록되지 않았습니다. 선생님께 학급 개설을 요청하거나 입력 정보를 확인해 주세요.`);
         setLoading(false);
         return;
       }
@@ -88,9 +97,9 @@ export const StudentAuth: React.FC<StudentAuthProps> = ({ onLoginSuccess, onSwit
         studentKey,
         name: student.name,
         gradeYear,
-        grade,
-        classNum,
-        studentNum,
+        grade: numGrade,
+        classNum: numClass,
+        studentNum: numStudent,
         classId,
       };
 
@@ -108,6 +117,11 @@ export const StudentAuth: React.FC<StudentAuthProps> = ({ onLoginSuccess, onSwit
   const handleSetPersonalPassword = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg('');
+
+    if (!grade || !classNum || !studentNum) {
+      setErrorMsg('학년, 반, 번호를 모두 입력해 주세요.');
+      return;
+    }
 
     if (!classPassword) {
       setErrorMsg('선생님이 안내해주신 학급 비밀번호를 입력해 주세요.');
@@ -144,9 +158,9 @@ export const StudentAuth: React.FC<StudentAuthProps> = ({ onLoginSuccess, onSwit
         studentKey,
         classId,
         gradeYear,
-        grade,
-        classNum,
-        studentNum,
+        grade: numGrade,
+        classNum: numClass,
+        studentNum: numStudent,
         name: name.trim(),
         passwordHash: newPasswordHash,
         isPasswordSet: true,
@@ -160,9 +174,9 @@ export const StudentAuth: React.FC<StudentAuthProps> = ({ onLoginSuccess, onSwit
         studentKey,
         name: name.trim(),
         gradeYear,
-        grade,
-        classNum,
-        studentNum,
+        grade: numGrade,
+        classNum: numClass,
+        studentNum: numStudent,
         classId,
       };
 
@@ -221,30 +235,33 @@ export const StudentAuth: React.FC<StudentAuthProps> = ({ onLoginSuccess, onSwit
                 />
               </div>
               <div>
-                <label className="block text-xs font-semibold text-[#4A4A3A] mb-1">학년</label>
-                <select
-                  value={grade}
-                  onChange={(e) => setGrade(Number(e.target.value))}
-                  className="w-full px-3 py-2 text-sm bg-[#F5F2ED] border border-[#E5E1D5] text-[#4A4A3A] rounded-lg focus:outline-none focus:ring-2 focus:ring-[#889E73]/20 focus:border-[#889E73]"
-                >
-                  <option value={1}>1학년</option>
-                  <option value={2}>2학년</option>
-                  <option value={3}>3학년</option>
-                </select>
+                <label className="block text-xs font-semibold text-[#4A4A3A] mb-1">학년 (예: 1)</label>
+                <div className="relative">
+                  <input
+                    type="number"
+                    min={1}
+                    max={6}
+                    value={grade}
+                    onChange={(e) => setGrade(e.target.value)}
+                    className="w-full px-3 py-2 text-sm bg-[#F5F2ED] border border-[#E5E1D5] text-[#4A4A3A] rounded-lg focus:outline-none focus:ring-2 focus:ring-[#889E73]/20 focus:border-[#889E73]"
+                    required
+                  />
+                  <span className="absolute right-3 top-2.5 text-xs text-[#787664]">학년</span>
+                </div>
               </div>
             </div>
 
             {/* Class & Student Number */}
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="block text-xs font-semibold text-[#4A4A3A] mb-1">반</label>
+                <label className="block text-xs font-semibold text-[#4A4A3A] mb-1">반 (예: 1)</label>
                 <div className="relative">
                   <input
                     type="number"
                     min={1}
                     max={30}
                     value={classNum}
-                    onChange={(e) => setClassNum(Math.max(1, Number(e.target.value)))}
+                    onChange={(e) => setClassNum(e.target.value)}
                     className="w-full px-3 py-2 text-sm bg-[#F5F2ED] border border-[#E5E1D5] text-[#4A4A3A] rounded-lg focus:outline-none focus:ring-2 focus:ring-[#889E73]/20 focus:border-[#889E73]"
                     required
                   />
@@ -252,14 +269,14 @@ export const StudentAuth: React.FC<StudentAuthProps> = ({ onLoginSuccess, onSwit
                 </div>
               </div>
               <div>
-                <label className="block text-xs font-semibold text-[#4A4A3A] mb-1">번호</label>
+                <label className="block text-xs font-semibold text-[#4A4A3A] mb-1">번 (예: 1)</label>
                 <div className="relative">
                   <input
                     type="number"
                     min={1}
                     max={50}
                     value={studentNum}
-                    onChange={(e) => setStudentNum(Math.max(1, Number(e.target.value)))}
+                    onChange={(e) => setStudentNum(e.target.value)}
                     className="w-full px-3 py-2 text-sm bg-[#F5F2ED] border border-[#E5E1D5] text-[#4A4A3A] rounded-lg focus:outline-none focus:ring-2 focus:ring-[#889E73]/20 focus:border-[#889E73]"
                     required
                   />
