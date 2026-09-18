@@ -26,6 +26,9 @@ export const TeacherAuth: React.FC<TeacherAuthProps> = ({ onLoginSuccess, onSwit
   const checkSystemStatus = async () => {
     try {
       const settings = await getSystemSettings();
+      if (settings?.schoolName) {
+        setSchoolName(settings.schoolName);
+      }
       if (!settings || !settings.adminPasswordHash) {
         setIsFirstTime(true);
       } else {
