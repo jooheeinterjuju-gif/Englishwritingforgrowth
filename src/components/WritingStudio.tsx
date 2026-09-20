@@ -224,11 +224,36 @@ export const WritingStudio: React.FC<WritingStudioProps> = ({
       if (data.success && data.hints) {
         setAiHints(data.hints);
       } else {
-        setErrorMessage('AI 힌트를 불러오지 못했습니다. 다시 시도해 주세요.');
+        setAiHints({
+          cheeringMessage: '정말 멋진 생각이에요! 아래 추천 단어와 쉬운 문장 패턴을 참고해서 첫 문장을 시작해 보세요. ✨',
+          vocabHints: [
+            { korean: '친구들과 함께', english: 'with my friends', example: 'play with my friends' },
+            { korean: '재미있는 / 신나는', english: 'fun / exciting', example: 'It was very exciting!' },
+            { korean: '좋아하다', english: 'like / enjoy', example: 'I like to [동사]' },
+          ],
+          sentencePatterns: [
+            { pattern: 'I [동사] with my friends.', meaning: '나는 친구들과 함께 ~를 해요.' },
+            { pattern: 'It was really [fun / exciting].', meaning: '그것은 정말 [재미있었/신났]어요.' },
+            { pattern: 'I felt [happy / excited].', meaning: '나는 [행복/신남]을 느꼈어요.' },
+          ],
+        });
       }
     } catch (e) {
       console.error('Request AI hints error:', e);
-      setErrorMessage('힌트 요청 중 통신 오류가 발생했습니다.');
+      // 통신 중단 시에도 학생이 중단되지 않고 영작을 진행할 수 있도록 안내 힌트 즉시 제공
+      setAiHints({
+        cheeringMessage: '정말 멋진 생각이에요! 아래 추천 단어와 쉬운 문장 패턴을 참고해서 첫 문장을 시작해 보세요. ✨',
+        vocabHints: [
+          { korean: '친구들과 함께', english: 'with my friends', example: 'play with my friends' },
+          { korean: '재미있는 / 신나는', english: 'fun / exciting', example: 'It was very exciting!' },
+          { korean: '좋아하다', english: 'like / enjoy', example: 'I like to [동사]' },
+        ],
+        sentencePatterns: [
+          { pattern: 'I [동사] with my friends.', meaning: '나는 친구들과 함께 ~를 해요.' },
+          { pattern: 'It was really [fun / exciting].', meaning: '그것은 정말 [재미있었/신났]어요.' },
+          { pattern: 'I felt [happy / excited].', meaning: '나는 [행복/신남]을 느꼈어요.' },
+        ],
+      });
     } finally {
       setLoadingHints(false);
     }

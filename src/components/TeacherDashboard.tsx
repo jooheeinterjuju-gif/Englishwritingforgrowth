@@ -1028,13 +1028,13 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ currentTab, 
                 <div className="flex items-center justify-between">
                   <div>
                     <div className="flex items-center gap-1.5">
-                      <span className="text-xs font-bold text-[#4A4A3A]">Gemini AI 듀얼 엔진 상태</span>
+                      <span className="text-xs font-bold text-[#4A4A3A]">Gemini AI 멀티 엔진 상태</span>
                       <span className="px-1.5 py-0.5 bg-[#EBF0E5] text-[#4F6839] text-[10px] font-bold rounded-md">
-                        자동 복구 백업
+                        자동 복구 캐스케이드
                       </span>
                     </div>
                     <p className="text-[11px] text-[#787664] mt-0.5">
-                      주 모델: <code className="text-[#889E73] font-bold">gemini-3.6-flash</code> | 보조 모델: <code className="text-[#A75336] font-bold">gemini-3.7-flash</code>
+                      우선 순위: <code className="text-[#889E73] font-bold">gemini-3.6-flash</code> ➔ <code className="text-[#787664] font-bold">gemini-3.8-flash</code> ➔ <code className="text-[#A75336] font-bold">gemini-3.1-flash-lite</code>
                     </p>
                   </div>
                   <button

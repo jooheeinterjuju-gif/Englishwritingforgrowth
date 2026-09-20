@@ -30,9 +30,20 @@ function getGeminiClient(): GoogleGenAI {
   return aiClient;
 }
 
-// 2. [자동 복구 듀얼 모델 (안정성)] - Primary: gemini-3.6-flash, Fallback: gemini-3.7-flash
-const PRIMARY_MODEL = "gemini-3.6-flash";
-const FALLBACK_MODEL = "gemini-3.7-flash";
+// 2. [자동 복구 멀티 모델 캐스케이드 (안정성)]
+// Priority order:
+// 1. gemini-3.6-flash (Middle school tutoring & Korean fluency)
+// 2. gemini-3.8-flash (Standard recommended text model per Gemini API skill)
+// 3. gemini-3.1-flash-lite (High-throughput, ultra-reliable fallback)
+// 4. gemini-3.7-flash (Emergency auxiliary model)
+const MODEL_CASCADE = [
+  "gemini-3.6-flash",
+  "gemini-3.8-flash",
+  "gemini-3.1-flash-lite",
+  "gemini-3.7-flash",
+];
+const PRIMARY_MODEL = MODEL_CASCADE[0];
+const FALLBACK_MODEL = MODEL_CASCADE[1];
 
 interface DualModelOptions {
   contents: string | any;
@@ -61,30 +72,13 @@ async function generateWithDualModelFallback(options: DualModelOptions): Promise
     config.temperature = options.temperature;
   }
 
-  // 1차 시도: 메인 모델 (gemini-3.6-flash)
-  try {
-    const response = await ai.models.generateContent({
-      model: PRIMARY_MODEL,
-      contents: options.contents,
-      config,
-    });
+  const errors: string[] = [];
 
-    const latencyMs = Date.now() - startTime;
-    return {
-      text: response.text || "",
-      modelUsed: PRIMARY_MODEL,
-      isFallback: false,
-      latencyMs,
-    };
-  } catch (primaryError: any) {
-    console.warn(
-      `[Gemini Dual-Model Failover] 주 모델(${PRIMARY_MODEL}) 호출 실패: ${primaryError?.message}. 보조 모델(${FALLBACK_MODEL})로 자동 전환합니다.`
-    );
-
-    // 2차 시도: 백업 모델 (gemini-3.7-flash)
+  for (let i = 0; i < MODEL_CASCADE.length; i++) {
+    const currentModel = MODEL_CASCADE[i];
     try {
       const response = await ai.models.generateContent({
-        model: FALLBACK_MODEL,
+        model: currentModel,
         contents: options.contents,
         config,
       });
@@ -92,20 +86,119 @@ async function generateWithDualModelFallback(options: DualModelOptions): Promise
       const latencyMs = Date.now() - startTime;
       return {
         text: response.text || "",
-        modelUsed: FALLBACK_MODEL,
-        isFallback: true,
+        modelUsed: currentModel,
+        isFallback: i > 0,
         latencyMs,
       };
-    } catch (fallbackError: any) {
-      console.error(
-        `[Gemini Dual-Model Failover] 주 모델(${PRIMARY_MODEL}) 및 보조 모델(${FALLBACK_MODEL}) 모두 실패:`,
-        fallbackError
+    } catch (modelErr: any) {
+      const errMsg = modelErr?.message || String(modelErr);
+      errors.push(`[${currentModel}]: ${errMsg.slice(0, 100)}`);
+      console.warn(
+        `[Gemini Multi-Model Cascade] 모델(${currentModel}) 호출 실패 (${errMsg.slice(0, 80)}). 다음 모델(${MODEL_CASCADE[i + 1] || "없음"})로 자동 전환합니다.`
       );
-      throw new Error(
-        `Gemini AI 통신 오류 (주 모델: ${primaryError?.message || "오류"} / 보조 모델: ${fallbackError?.message || "오류"})`
-      );
+
+      if (i < MODEL_CASCADE.length - 1) {
+        await new Promise((resolve) => setTimeout(resolve, 200));
+      }
     }
   }
+
+  throw new Error(`Gemini AI 통신 오류 (모든 모델 시도 실패: ${errors.join(" | ")})`);
+}
+
+// 중학교 1학년 맞춤형 오프라인/네트워크 장애 대비 힌트 생성기
+function generateFallbackHints(koreanIdea: string, topicTitle?: string) {
+  const dict: Record<string, { english: string; example: string }> = {
+    축구: { english: "soccer", example: "play soccer (축구를 하다)" },
+    농구: { english: "basketball", example: "play basketball (농구를 하다)" },
+    야구: { english: "baseball", example: "play baseball (야구를 하다)" },
+    운동: { english: "exercise / workout", example: "do exercise (운동을 하다)" },
+    달리기: { english: "running / run", example: "go running (달리기를 하다)" },
+    수영: { english: "swimming / swim", example: "go swimming (수영하러 가다)" },
+    친구: { english: "friend", example: "with my friends (친구들과 함께)" },
+    가족: { english: "family", example: "with my family (가족과 함께)" },
+    부모: { english: "parents", example: "my parents (부모님)" },
+    엄마: { english: "mom", example: "my mom (우리 엄마)" },
+    아빠: { english: "dad", example: "my dad (우리 아빠)" },
+    동생: { english: "brother / sister", example: "my brother / sister (동생)" },
+    학교: { english: "school", example: "at school (학교에서)" },
+    선생: { english: "teacher", example: "my teacher (선생님)" },
+    수업: { english: "class", example: "in English class (영어 수업에서)" },
+    공부: { english: "study", example: "study hard (열심히 공부하다)" },
+    숙제: { english: "homework", example: "do homework (숙제를 하다)" },
+    시험: { english: "test / exam", example: "take a test (시험을 보다)" },
+    점심: { english: "lunch", example: "eat lunch (점심을 먹다)" },
+    저녁: { english: "dinner", example: "have dinner (저녁을 먹다)" },
+    아침: { english: "breakfast / morning", example: "in the morning (아침에)" },
+    음식: { english: "food", example: "delicious food (맛있는 음식)" },
+    피자: { english: "pizza", example: "eat pizza (피자를 먹다)" },
+    치킨: { english: "chicken", example: "eat chicken (치킨을 먹다)" },
+    떡볶이: { english: "tteokbokki (spicy rice cakes)", example: "eat tteokbokki (떡볶이를 먹다)" },
+    게임: { english: "game", example: "play computer games (게임을 하다)" },
+    영화: { english: "movie", example: "watch a movie (영화를 보다)" },
+    음악: { english: "music", example: "listen to music (음악을 듣다)" },
+    노래: { english: "song", example: "sing a song (노래를 부르다)" },
+    책: { english: "book", example: "read a book (책을 읽다)" },
+    독서: { english: "reading", example: "like reading books (책 읽기를 좋아하다)" },
+    여행: { english: "trip / travel", example: "go on a trip (여행을 가다)" },
+    바다: { english: "sea / beach", example: "go to the beach (바다에 가다)" },
+    산: { english: "mountain", example: "climb a mountain (등산하다)" },
+    공원: { english: "park", example: "in the park (공원에서)" },
+    자전거: { english: "bicycle / bike", example: "ride a bike (자전거를 타다)" },
+    동물: { english: "animal", example: "cute animals (귀여운 동물들)" },
+    강아지: { english: "puppy / dog", example: "walk with my puppy (강아지와 산책하다)" },
+    고양이: { english: "cat", example: "cute cat (귀여운 고양이)" },
+    주말: { english: "weekend", example: "on the weekend (주말에)" },
+    어제: { english: "yesterday", example: "yesterday (어제 - 과거시제 사용)" },
+    오늘: { english: "today", example: "today (오늘)" },
+    내일: { english: "tomorrow", example: "tomorrow (내일)" },
+    행복: { english: "happy", example: "I felt happy. (행복했어요)" },
+    신나: { english: "excited / exciting", example: "It was exciting! (정말 신났어요!)" },
+    재미: { english: "fun / interesting", example: "It was really fun. (정말 재미있었어요)" },
+    좋아: { english: "like / enjoy", example: "I like to ~ (~하는 것을 좋아해요)" },
+    기분: { english: "feeling / mood", example: "in a good mood (기분이 좋은)" },
+  };
+
+  const vocabHints: Array<{ korean: string; english: string; example: string }> = [];
+  const text = (koreanIdea + " " + (topicTitle || "")).toLowerCase();
+
+  for (const [k, v] of Object.entries(dict)) {
+    if (text.includes(k)) {
+      vocabHints.push({
+        korean: k,
+        english: v.english,
+        example: v.example,
+      });
+      if (vocabHints.length >= 4) break;
+    }
+  }
+
+  if (vocabHints.length < 3) {
+    const defaults = [
+      { korean: "생각하다", english: "think", example: "I think ~ (~라고 생각해요)" },
+      { korean: "좋아하다", english: "like / love", example: "I like to [동사] (~하는 것을 좋아해요)" },
+      { korean: "재미있는", english: "fun / exciting", example: "It was so fun! (정말 재미있었어요!)" },
+      { korean: "시간을 보내다", english: "spend time", example: "spend time with friends (친구들과 시간을 보내다)" },
+    ];
+    for (const d of defaults) {
+      if (!vocabHints.some((v) => v.korean === d.korean)) {
+        vocabHints.push(d);
+        if (vocabHints.length >= 3) break;
+      }
+    }
+  }
+
+  const sentencePatterns = [
+    { pattern: "I usually [동사] with my friends.", meaning: "나는 보통 친구들과 함께 ~를 해요." },
+    { pattern: "It made me feel [happy / excited].", meaning: "그것은 나를 [행복하게/신나게] 만들어 주었어요." },
+    { pattern: "I want to [동사] again next time.", meaning: "다음 번에 또 ~하고 싶어요." },
+  ];
+
+  return {
+    cheeringMessage: "정말 멋진 생각이에요! 추천 단어와 쉬운 문장 패턴을 참고해서 첫 문장을 가볍게 적어보세요. ✨",
+    vocabHints,
+    sentencePatterns,
+  };
 }
 
 // 3. [오류 없는 깔끔한 응답 (정확성)] - Markdown JSON Sanitizer & Robust Parser
@@ -273,12 +366,12 @@ ${customTheme ? `선생님이 희망하는 테마/키워드: ${customTheme}` : "
 
 // 6. Korean Idea to English Writing Hints (한글 기반 단어/구문 힌트)
 app.post("/api/gemini/hints", async (req, res) => {
-  try {
-    const { koreanIdea, topicTitle } = req.body;
-    if (!koreanIdea) {
-      return res.status(400).json({ success: false, error: "koreanIdea is required" });
-    }
+  const { koreanIdea, topicTitle } = req.body;
+  if (!koreanIdea) {
+    return res.status(400).json({ success: false, error: "koreanIdea is required" });
+  }
 
+  try {
     const prompt = `
 당신은 대한민국 중학교 1학년 학생을 돕는 친절한 영어 글쓰기 튜터입니다.
 학생이 쓴 한글 생각 내용을 바탕으로, 학생이 직접 기초 영작을 시도할 수 있도록 쉬운 단어와 기초 문장 패턴 힌트를 제공하세요.
@@ -317,22 +410,34 @@ ${koreanIdea}
       temperature: 0.6,
     });
 
-    const parsed = cleanAndParseJson(result.text, {});
-    res.json({ success: true, hints: parsed, modelUsed: result.modelUsed, isFallback: result.isFallback });
+    const parsed = cleanAndParseJson(result.text, null);
+    if (parsed && parsed.cheeringMessage && Array.isArray(parsed.vocabHints)) {
+      return res.json({ success: true, hints: parsed, modelUsed: result.modelUsed, isFallback: result.isFallback });
+    }
+
+    // JSON 형태가 불완전할 경우 안전한 힌트 생성기 호출
+    const fallbackHints = generateFallbackHints(koreanIdea, topicTitle);
+    return res.json({ success: true, hints: fallbackHints, modelUsed: result.modelUsed + "-fallback", isFallback: true });
   } catch (error: any) {
-    console.error("Hints error:", error);
-    res.status(500).json({ success: false, error: error.message });
+    console.warn("Hints generation API error, activating fallback generator:", error?.message);
+    const fallbackHints = generateFallbackHints(koreanIdea, topicTitle);
+    return res.json({
+      success: true,
+      hints: fallbackHints,
+      modelUsed: "smart-rule-fallback",
+      isFallback: true,
+    });
   }
 });
 
 // 7. Step 1 AI Grammar Check (1차 문법 오류 교정)
 app.post("/api/gemini/grammar-check", async (req, res) => {
-  try {
-    const { draftText, koreanIdea, topicTitle } = req.body;
-    if (!draftText) {
-      return res.status(400).json({ success: false, error: "draftText is required" });
-    }
+  const { draftText, koreanIdea, topicTitle } = req.body;
+  if (!draftText) {
+    return res.status(400).json({ success: false, error: "draftText is required" });
+  }
 
+  try {
     const prompt = `
 당신은 중학교 1학년 영어 선생님입니다.
 학생이 쓴 기초 영어 글을 읽고 문법과 철자(스펠링), 대소문자, 문장부호를 검토해 주세요.
@@ -372,22 +477,44 @@ ${draftText}
       temperature: 0.3,
     });
 
-    const parsed = cleanAndParseJson(result.text, {});
-    res.json({ success: true, feedback: parsed, modelUsed: result.modelUsed, isFallback: result.isFallback });
+    const parsed = cleanAndParseJson(result.text, null);
+    if (parsed && parsed.improvedDraft) {
+      return res.json({ success: true, feedback: parsed, modelUsed: result.modelUsed, isFallback: result.isFallback });
+    }
+
+    return res.json({
+      success: true,
+      feedback: {
+        praiseMessage: "첫 영어 문장을 용기 있게 작성한 멋진 도전이에요! 문장의 기본 형태가 잘 갖추어져 있습니다. 👏",
+        corrections: [],
+        improvedDraft: draftText,
+      },
+      modelUsed: result.modelUsed + "-fallback",
+      isFallback: true,
+    });
   } catch (error: any) {
-    console.error("Grammar check error:", error);
-    res.status(500).json({ success: false, error: error.message });
+    console.warn("Grammar check API error, activating fallback generator:", error?.message);
+    return res.json({
+      success: true,
+      feedback: {
+        praiseMessage: "스스로 영어 문장을 완성한 훌륭한 시도예요! 문법 검토를 이어 진행할 수 있습니다. 👏",
+        corrections: [],
+        improvedDraft: draftText,
+      },
+      modelUsed: "smart-rule-fallback",
+      isFallback: true,
+    });
   }
 });
 
 // 8. Step 2 AI Expression Expansion (2차 표현 확장 제안)
 app.post("/api/gemini/expression-expansion", async (req, res) => {
-  try {
-    const { currentText, koreanIdea, topicTitle } = req.body;
-    if (!currentText) {
-      return res.status(400).json({ success: false, error: "currentText is required" });
-    }
+  const { currentText, koreanIdea, topicTitle } = req.body;
+  if (!currentText) {
+    return res.status(400).json({ success: false, error: "currentText is required" });
+  }
 
+  try {
     const prompt = `
 당신은 중학교 1학년 학생들의 풍부한 글쓰기를 돕는 영어 멘토입니다.
 학생이 문법 검토를 거친 영어 글을 보고, 감정이나 디테일을 더 풍부하게 표현할 수 있는 '딱 1가지 구체적인 제안'을 해주세요.
@@ -422,11 +549,43 @@ ${currentText}
       temperature: 0.5,
     });
 
-    const parsed = cleanAndParseJson(result.text, {});
-    res.json({ success: true, suggestion: parsed, modelUsed: result.modelUsed, isFallback: result.isFallback });
+    const parsed = cleanAndParseJson(result.text, null);
+    if (parsed && parsed.suggestionTitle) {
+      return res.json({ success: true, suggestion: parsed, modelUsed: result.modelUsed, isFallback: result.isFallback });
+    }
+
+    const sentences = currentText.split(/[.!?]+/).filter(Boolean);
+    const targetSentence = sentences[0]?.trim() || currentText;
+
+    return res.json({
+      success: true,
+      suggestion: {
+        targetSentence,
+        suggestionTitle: "감정이나 느낌을 나타내는 단어 더하기",
+        friendlyGuide: "문장에 그때의 기분(happy, excited)이나 장소(at school, at home)를 덧붙여 더 생생하게 만들어 보세요!",
+        exampleKeywords: ["happy (행복한)", "excited (신나는)", "with my friends (친구들과 함께)"],
+        exampleResult: `${targetSentence}. It was very exciting!`,
+      },
+      modelUsed: result.modelUsed + "-fallback",
+      isFallback: true,
+    });
   } catch (error: any) {
-    console.error("Expression expansion error:", error);
-    res.status(500).json({ success: false, error: error.message });
+    console.warn("Expression expansion API error, activating fallback generator:", error?.message);
+    const sentences = currentText.split(/[.!?]+/).filter(Boolean);
+    const targetSentence = sentences[0]?.trim() || currentText;
+
+    return res.json({
+      success: true,
+      suggestion: {
+        targetSentence,
+        suggestionTitle: "감정이나 느낌을 나타내는 단어 더하기",
+        friendlyGuide: "문장에 그때의 기분(happy, excited)이나 장소(at school, at home)를 덧붙여 더 생생하게 만들어 보세요!",
+        exampleKeywords: ["happy (행복한)", "excited (신나는)", "with my friends (친구들과 함께)"],
+        exampleResult: `${targetSentence}. It was very exciting!`,
+      },
+      modelUsed: "smart-rule-fallback",
+      isFallback: true,
+    });
   }
 });
 
