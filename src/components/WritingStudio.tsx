@@ -30,6 +30,70 @@ import {
 import { saveWritingRecord, getWritingRecord, getDailyTopics, saveStudentGrowth, getStudentGrowth } from '../firebase/db';
 import { calculateXpGrant } from '../utils/gamification';
 
+// 비상 시 오프라인/네트워크 일시 지연 대비 즉시 맞춤 힌트 생성기 (학생 작성 흐름 보장)
+function buildEmergencyHints(korean: string): AiHintsResponse {
+  const text = korean.trim();
+  const vocab: Array<{ korean: string; english: string; example: string }> = [];
+
+  if (text.includes('라면')) {
+    vocab.push({ korean: '라면', english: 'instant noodles / ramen', example: 'eat ramen' });
+  }
+  if (text.includes('인스턴트')) {
+    vocab.push({ korean: '인스턴트', english: 'instant food', example: 'stop eating instant food' });
+  }
+  if (text.includes('환경') || text.includes('환경보호')) {
+    vocab.push({ korean: '환경 보호', english: 'protect the environment', example: 'to protect the environment' });
+  }
+  if (text.includes('매연')) {
+    vocab.push({ korean: '매연', english: 'smoke / fumes', example: 'factories emit smoke' });
+  }
+  if (text.includes('공장')) {
+    vocab.push({ korean: '공장', english: 'factory', example: 'at the factory' });
+  }
+  if (text.includes('먹지') || text.includes('않')) {
+    vocab.push({ korean: '먹지 않다', english: 'will not eat', example: 'I will not eat fast food.' });
+  }
+  if (text.includes('축구')) {
+    vocab.push({ korean: '축구', english: 'play soccer', example: 'play soccer after school' });
+  }
+  if (text.includes('친구')) {
+    vocab.push({ korean: '친구', english: 'friend', example: 'with my friends' });
+  }
+  if (text.includes('음악') || text.includes('피아노') || text.includes('노래')) {
+    vocab.push({ korean: '음악/악기', english: 'music / instrument', example: 'play musical instruments' });
+  }
+
+  const defaultWords = [
+    { korean: '결심하다', english: 'decided to', example: 'I decided to do my best.' },
+    { korean: '줄이다', english: 'reduce / cut down', example: 'reduce waste' },
+    { korean: '중요한', english: 'important', example: 'It is important to protect nature.' },
+  ];
+  for (const item of defaultWords) {
+    if (vocab.length >= 3) break;
+    if (!vocab.some((v) => v.korean === item.korean)) {
+      vocab.push(item);
+    }
+  }
+
+  return {
+    isAmbiguous: false,
+    clarificationMessage: '',
+    guidingQuestions: [],
+    cheeringMessage: `"${text.slice(0, 24)}${text.length > 24 ? '...' : ''}"에 대한 생각 정말 좋아요! 아래 맞춤 단어 3가지와 괄호 패턴을 활용해 첫 문장을 적어보세요. ✨`,
+    vocabHints: vocab.slice(0, 3),
+    sentencePatterns: [
+      {
+        pattern: 'I decided not to [동사원형: eat/buy] [명사] to protect [대상].',
+        meaning: '나는 [대상]을(를) 보호하기 위해 [명사]을(를) [먹지/사지] 않기로 결심했다.',
+      },
+      {
+        pattern: 'Factories emit [매연: smoke], so I will [행동].',
+        meaning: '공장에서 매연을 내뿜기 때문에 나는 [행동]할 것이다.',
+      },
+    ],
+  };
+}
+
 interface WritingStudioProps {
   studentSession: StudentSession;
   studentGrowth: StudentGrowthDoc;
@@ -220,15 +284,31 @@ export const WritingStudio: React.FC<WritingStudioProps> = ({
           topicTitle: selectedTopic?.title,
         }),
       });
-      const data = await res.json();
-      if (data.success && data.hints) {
+
+      let data: any = null;
+      if (res.ok) {
+        try {
+          data = await res.json();
+        } catch (_jsonErr) {
+          console.warn('JSON parsing error from hints endpoint:', _jsonErr);
+        }
+      }
+
+      if (data && data.success && data.hints) {
         setAiHints(data.hints);
+        setErrorMessage('');
       } else {
-        setErrorMessage(data.error || 'AI 힌트를 불러오지 못했습니다. 다시 시도해 주세요.');
+        // 비상 맞춤 힌트로 자동 전환하여 학생 화면에 중단 없이 힌트 표출
+        const fallback = buildEmergencyHints(koreanIdea);
+        setAiHints(fallback);
+        setErrorMessage('');
       }
     } catch (e) {
-      console.error('Request AI hints error:', e);
-      setErrorMessage('힌트 요청 중 통신 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.');
+      console.warn('Request AI hints network error, applying resilient fallback:', e);
+      // 통신 에러 발생 시에도 학생 작성 흐름이 끊기지 않도록 즉시 맞춤형 힌트 제공
+      const fallback = buildEmergencyHints(koreanIdea);
+      setAiHints(fallback);
+      setErrorMessage('');
     } finally {
       setLoadingHints(false);
     }

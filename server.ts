@@ -1,6 +1,6 @@
 import express from "express";
 import path from "path";
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenAI, Type } from "@google/genai";
 import dotenv from "dotenv";
 
 dotenv.config();
@@ -47,7 +47,21 @@ interface DualModelOptions {
   contents: string | any;
   systemInstruction?: string;
   responseMimeType?: string;
+  responseSchema?: any;
   temperature?: number;
+  maxOutputTokens?: number;
+  timeoutMs?: number;
+}
+
+// 비동기 호출 타임아웃 래퍼 (네트워크 행/지연으로 인한 Reverse Proxy 504 타임아웃 차단)
+function withCallTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  let timer: NodeJS.Timeout;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`API call timed out after ${ms}ms`)), ms);
+  });
+  return Promise.race([promise, timeoutPromise]).finally(() => {
+    clearTimeout(timer);
+  });
 }
 
 async function generateWithDualModelFallback(options: DualModelOptions): Promise<{
@@ -66,20 +80,30 @@ async function generateWithDualModelFallback(options: DualModelOptions): Promise
   if (options.responseMimeType) {
     config.responseMimeType = options.responseMimeType;
   }
+  if (options.responseSchema) {
+    config.responseSchema = options.responseSchema;
+  }
   if (typeof options.temperature === "number") {
     config.temperature = options.temperature;
   }
+  if (typeof options.maxOutputTokens === "number") {
+    config.maxOutputTokens = options.maxOutputTokens;
+  }
 
   const errors: string[] = [];
+  const perModelTimeout = options.timeoutMs || 7000;
 
   for (let i = 0; i < MODEL_CASCADE.length; i++) {
     const currentModel = MODEL_CASCADE[i];
     try {
-      const response = await ai.models.generateContent({
-        model: currentModel,
-        contents: options.contents,
-        config,
-      });
+      const response = await withCallTimeout(
+        ai.models.generateContent({
+          model: currentModel,
+          contents: options.contents,
+          config,
+        }),
+        perModelTimeout
+      );
 
       const latencyMs = Date.now() - startTime;
       return {
@@ -96,7 +120,7 @@ async function generateWithDualModelFallback(options: DualModelOptions): Promise
       );
 
       if (i < MODEL_CASCADE.length - 1) {
-        await new Promise((resolve) => setTimeout(resolve, 200));
+        await new Promise((resolve) => setTimeout(resolve, 150));
       }
     }
   }
@@ -530,109 +554,91 @@ app.post("/api/gemini/hints", async (req, res) => {
     });
   }
 
+  // 2차: 학생 입력 글이 길거나 복잡할 때도 토큰 초과나 통신 지연 없이 안정적으로 처리하도록 350자 안전 슬라이스
+  const safeInput = trimmedInput.slice(0, 350);
+
   try {
-    const systemInstruction = `You are an expert bilingual Korean-English writing coach for Korean 7th-grade students (대한민국 중학교 1학년 / 만 13세).
-Your primary task is to deeply and dynamically analyze the student's Korean input ({{student_input}}) to generate personalized, level-appropriate English vocabulary and structural sentence patterns.
+    const systemInstruction = `You are an expert bilingual writing coach for Korean 7th-grade students (중학교 1학년 / 만 13세).
+Your mission is to deeply analyze the student's Korean thoughts and generate 100% personalized, grade-appropriate English vocabulary hints and structural sentence patterns.
 
-[CRITICAL INSTRUCTIONS & STRICT CONSTRAINTS]
-1. STRICTLY DYNAMIC CONTENT EXTRACTION (ANTI-BOILERPLATE MANDATE):
-   - You MUST analyze the specific entities, nouns, verbs, emotions, and context provided in {{student_input}}.
-   - You are STRICTLY FORBIDDEN from returning predefined, stock filler expressions (such as generic "play with my friends", "spend time", "like/enjoy", or "happy/excited") unless the student's Korean text explicitly describes those exact subjects.
-   - Every single vocabulary hint and sentence pattern MUST directly trace back to the student's unique words and thoughts.
+[STRICT CONSTRAINTS]
+1. ZERO BOILERPLATE & EXACTLY 3 VOCAB HINTS:
+   - Extract EXACTLY 3 vocabulary hints directly derived from the specific nouns, verbs, and entities in the student's input.
+   - Strictly forbid irrelevant stock phrases (e.g. do NOT output "play with friends", "enjoy", "happy" unless explicitly written by the student).
+2. GRADE 7 LEVEL (중1 수준):
+   - Keep vocabulary within standard basic English words (중1 교육과정 기본 어휘 800단어).
+   - For past tense, specify both the root and past form (e.g. "ate (eat의 과거형: 먹었다)").
+3. SCAFFOLDED SENTENCE PATTERNS (2~3개):
+   - Provide 2 to 3 sentence patterns containing bracketed placeholders like "[동사]", "[음식]", "[장소]".
+   - Never provide a full completed sentence translation; always leave brackets so students assemble their own thoughts.
+4. CHEERING MESSAGE:
+   - A warm, encouraging sentence in Korean mentioning the student's specific topic or determination.`;
 
-2. AMBIGUITY & VAGUENESS DETECTION (정확한 입력 요청):
-   - You must evaluate whether the student's input contains enough concrete information (who, what, where, action, or feeling) to produce meaningful English hints.
-   - The input MUST be flagged as ambiguous ("isAmbiguous": true) if it meets ANY of these criteria:
-     * Too short: Less than 4-5 Korean characters or only 1-2 fragmented words (e.g., "좋다", "밥", "어제", "축구", "그냥").
-     * Consonant/vowel/symbol only: Slang like "ㅋㅋㅋ", "ㅎㅎ", "ㅇㅇ", "ㅠㅠ", "^^", or keyboard smashing.
-     * Evasive or non-informative phrases: "몰라요", "생각 안 남", "아무거나", "글쓰기 싫어", "없음".
-     * Incoherent or fragmented input that does not convey an action, subject, or context.
-   - WHEN AMBIGUOUS ("isAmbiguous": true):
-     * "clarificationMessage": Provide an encouraging, gentle explanation in Korean asking the student to write more specifically (e.g. explain that telling 'who, when, what was done, or how they felt' allows the AI to provide great custom hints, and give a friendly example like "어제 점심에 친구와 떡볶이를 먹었는데 정말 맛있었다").
-     * "guidingQuestions": Provide 2-3 tailored Korean guiding questions related to the topic to prompt their ideas.
-     * "cheeringMessage": Friendly short cheer asking for a bit more detail.
-     * "vocabHints": [] (empty array)
-     * "sentencePatterns": [] (empty array)
-   - WHEN CLEAR AND MEANINGFUL ("isAmbiguous": false):
-     * "clarificationMessage": ""
-     * "guidingQuestions": []
-     * "cheeringMessage": A tailored, non-generic cheer referencing the student's specific topic or activity.
-     * "vocabHints": Exactly 3-5 vocabulary hints mapped directly to words in {{student_input}}.
-     * "sentencePatterns": Exactly 2-3 scaffolded sentence patterns with bracketed placeholders (e.g. "[동사]", "[음식]", "[장소]") fitting the student's exact sentence structure.
-
-3. GRADE 7 CURRICULUM LEVEL (중1 수준):
-   - Keep vocabulary within the Ministry of Education 800 basic vocabulary words.
-   - If past actions are described, provide the past tense with the root verb (e.g. "ate (eat의 과거형: 먹었다)").
-   - DO NOT provide a finished translation of the whole sentence. Always provide fill-in-the-blank brackets so the student constructs their own draft.
-
-4. OUTPUT FORMAT:
-   - Output MUST strictly be valid JSON conforming to the requested schema with no surrounding commentary or markdown code blocks.`;
-
-    const prompt = `
-[글쓰기 주제]
+    const prompt = `[글쓰기 주제]
 ${topicTitle || "자유 주제"}
 
-[학생이 작성한 한글 생각 ({{student_input}})]
-"""
-${trimmedInput}
-"""
+[학생이 작성한 한글 생각]
+${safeInput}
 
-위 학생의 입력값({{student_input}})을 동적으로 정밀 분석하여, 아래 규격에 맞는 JSON으로 응답하세요.
+위 학생의 한글 생각을 깊이 분석하여, 학생 글에 나오는 소재에 맞는 중1 맞춤 영단어 3가지와 대괄호 [ ] 빈칸이 있는 기초 문장 패턴 2~3가지를 작성해 주세요.`;
 
-[응답 포맷 1: 학생 입력이 모호하거나 너무 짧은 경우]
-{
-  "isAmbiguous": true,
-  "clarificationMessage": "구체적인 한국어 보완 요청 안내문 (예: '어떤 일이나 장소, 기분에 대해 쓰고 싶은지 조금만 더 구체적으로 적어줄 수 있나요? (예: \"어제 점심에 가족과 김밥을 만들었는데 재미있었다\"처럼 누가, 무엇을 했는지 적어주면 딱 맞는 멋진 영어 힌트를 줄게요!)')",
-  "guidingQuestions": [
-    "생각을 이끌어내는 질문 1 (예: 언제, 어디서 있었던 일인가요?)",
-    "생각을 이끌어내는 질문 2 (예: 누구와 함께 무엇을 했나요?)",
-    "생각을 이끌어내는 질문 3 (예: 그 순간 어떤 기분이나 생각이 들었나요?)"
-  ],
-  "cheeringMessage": "구체적인 생각을 조금만 더 적어주면 딱 맞는 영어 힌트를 준비해 줄게요! 😊",
-  "vocabHints": [],
-  "sentencePatterns": []
-}
-
-[응답 포맷 2: 학생 입력에 구체적인 내용과 상황이 담겨 있는 경우]
-{
-  "isAmbiguous": false,
-  "clarificationMessage": "",
-  "guidingQuestions": [],
-  "cheeringMessage": "학생의 구체적인 소재(활동, 음식, 감정 등)를 직접 언급하며 격려하는 맞춤형 한마디",
-  "vocabHints": [
-    {
-      "korean": "{{student_input}}에서 추출한 한글 단어/표현",
-      "english": "중1 수준 영단어 (과거 시제 필요 시 과거형 명시)",
-      "example": "문장에서 바로 쓸 수 있는 짧은 예시 표현"
-    }
-  ],
-  "sentencePatterns": [
-    {
-      "pattern": "학생의 한글 문장 구조에 1:1로 맞춘 빈칸 괄호 패턴 (예: I [과거동사] [대상] at [장소].)",
-      "meaning": "해당 문장 패턴의 한글 뜻"
-    }
-  ]
-}
-`;
+    const hintsResponseSchema = {
+      type: Type.OBJECT,
+      properties: {
+        cheeringMessage: {
+          type: Type.STRING,
+          description: "학생이 쓴 글의 구체적인 소재나 다짐을 언급하며 따뜻하게 격려하는 한국어 한마디",
+        },
+        vocabHints: {
+          type: Type.ARRAY,
+          description: "학생 글에서 추출한 핵심 표현에 대한 중1 수준 맞춤 영단어 정확히 3가지",
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              korean: { type: Type.STRING, description: "학생 글에서 나온 한글 단어 또는 구문" },
+              english: { type: Type.STRING, description: "중학교 1학년 수준의 쉬운 영어 단어/표현 (필요 시 과거형 명시)" },
+              example: { type: Type.STRING, description: "해당 단어가 쓰인 짧고 쉬운 예시구 또는 문장" },
+            },
+            required: ["korean", "english", "example"],
+          },
+        },
+        sentencePatterns: {
+          type: Type.ARRAY,
+          description: "학생 생각을 영어로 표현할 때 쓸 수 있는 대괄호 [ ] 빈칸 포함 문장 패턴 2~3가지",
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              pattern: { type: Type.STRING, description: "대괄호 [ ] 빈칸이 포함된 쉬운 영어 문장 패턴" },
+              meaning: { type: Type.STRING, description: "해당 문장 패턴의 한국어 뜻" },
+            },
+            required: ["pattern", "meaning"],
+          },
+        },
+      },
+      required: ["cheeringMessage", "vocabHints", "sentencePatterns"],
+    };
 
     const result = await generateWithDualModelFallback({
       contents: prompt,
       systemInstruction,
       responseMimeType: "application/json",
-      temperature: 0.5,
+      responseSchema: hintsResponseSchema,
+      temperature: 0.3,
+      maxOutputTokens: 800,
+      timeoutMs: 6500,
     });
 
     const parsed = cleanAndParseJson(result.text, null);
-    if (parsed && (parsed.cheeringMessage || parsed.clarificationMessage)) {
+    if (parsed && Array.isArray(parsed.vocabHints) && parsed.vocabHints.length > 0) {
       return res.json({
         success: true,
         hints: {
-          isAmbiguous: Boolean(parsed.isAmbiguous),
-          clarificationMessage: parsed.clarificationMessage || "",
-          guidingQuestions: Array.isArray(parsed.guidingQuestions) ? parsed.guidingQuestions : [],
+          isAmbiguous: false,
+          clarificationMessage: "",
+          guidingQuestions: [],
           cheeringMessage: parsed.cheeringMessage || "정말 멋진 생각이에요! 차근차근 시작해 보세요. ✨",
-          vocabHints: Array.isArray(parsed.vocabHints) ? parsed.vocabHints : [],
-          sentencePatterns: Array.isArray(parsed.sentencePatterns) ? parsed.sentencePatterns : [],
+          vocabHints: parsed.vocabHints.slice(0, 3),
+          sentencePatterns: Array.isArray(parsed.sentencePatterns) ? parsed.sentencePatterns.slice(0, 3) : [],
         },
         modelUsed: result.modelUsed,
         isFallback: result.isFallback,
