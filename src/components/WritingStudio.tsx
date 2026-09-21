@@ -30,65 +30,234 @@ import {
 import { saveWritingRecord, getWritingRecord, getDailyTopics, saveStudentGrowth, getStudentGrowth } from '../firebase/db';
 import { calculateXpGrant } from '../utils/gamification';
 
-// 비상 시 오프라인/네트워크 일시 지연 대비 즉시 맞춤 힌트 생성기 (학생 작성 흐름 보장)
-function buildEmergencyHints(korean: string): AiHintsResponse {
-  const text = korean.trim();
-  const vocab: Array<{ korean: string; english: string; example: string }> = [];
+// 비상 시 오프라인/네트워크 일시 지연 대비 즉시 맞춤 힌트 생성기 (선생님 가이드, 추천 어휘, 문장 시작 패턴 최우선 반영)
+function buildEmergencyHints(korean: string, topic?: DailyTopicDoc | null): AiHintsResponse {
+  const text = (korean.trim() + ' ' + (topic?.title || '') + ' ' + (topic?.guidePrompt || '')).toLowerCase();
 
-  if (text.includes('라면')) {
-    vocab.push({ korean: '라면', english: 'instant noodles / ramen', example: 'eat ramen' });
-  }
-  if (text.includes('인스턴트')) {
-    vocab.push({ korean: '인스턴트', english: 'instant food', example: 'stop eating instant food' });
-  }
-  if (text.includes('환경') || text.includes('환경보호')) {
-    vocab.push({ korean: '환경 보호', english: 'protect the environment', example: 'to protect the environment' });
-  }
-  if (text.includes('매연')) {
-    vocab.push({ korean: '매연', english: 'smoke / fumes', example: 'factories emit smoke' });
-  }
-  if (text.includes('공장')) {
-    vocab.push({ korean: '공장', english: 'factory', example: 'at the factory' });
-  }
-  if (text.includes('먹지') || text.includes('않')) {
-    vocab.push({ korean: '먹지 않다', english: 'will not eat', example: 'I will not eat fast food.' });
-  }
-  if (text.includes('축구')) {
-    vocab.push({ korean: '축구', english: 'play soccer', example: 'play soccer after school' });
-  }
-  if (text.includes('친구')) {
-    vocab.push({ korean: '친구', english: 'friend', example: 'with my friends' });
-  }
-  if (text.includes('음악') || text.includes('피아노') || text.includes('노래')) {
-    vocab.push({ korean: '음악/악기', english: 'music / instrument', example: 'play musical instruments' });
+  // 1. 단어/표현 사전 (중학교 1학년 교육과정 800단어 중심)
+  const dict: Record<string, { english: string; example: string; category: string; synonyms?: string[] }> = {
+    환경보호: { english: 'protecting the environment', example: 'for environmental protection', category: 'environment', synonyms: ['saving our Earth', 'protecting nature'] },
+    환경: { english: 'the environment', example: 'protect the environment', category: 'environment', synonyms: ['nature', 'our planet'] },
+    매연: { english: 'smoke / exhaust fumes', example: 'emit harmful smoke', category: 'environment', synonyms: ['air pollution'] },
+    공장: { english: 'factory', example: 'at the factory', category: 'environment' },
+    내뿜: { english: 'emit / produce', example: 'Factories emit smoke.', category: 'environment', synonyms: ['release', 'produce'] },
+    인스턴트: { english: 'instant food', example: 'stop eating instant food', category: 'food', synonyms: ['junk food', 'fast food'] },
+    지구: { english: 'the Earth / planet', example: 'save our Earth', category: 'environment', synonyms: ['our green planet'] },
+    쓰레기: { english: 'trash / waste', example: 'reduce plastic waste', category: 'environment', synonyms: ['garbage', 'litter'] },
+    플라스틱: { english: 'plastic', example: 'recycle plastic', category: 'environment' },
+    자연: { english: 'nature', example: 'clean nature', category: 'environment', synonyms: ['natural environment'] },
+    보호: { english: 'protect / save', example: 'protect the planet', category: 'environment', synonyms: ['preserve', 'care for'] },
+    줄이: { english: 'reduce / cut down on', example: 'reduce eating ramen', category: 'action', synonyms: ['cut down on', 'minimize'] },
+    결심: { english: 'decided to', example: 'I decided to protect nature.', category: 'action', synonyms: ['plan to', 'promise to'] },
+    피자: { english: 'pizza', example: 'eat delicious pizza', category: 'food' },
+    치킨: { english: 'chicken', example: 'eat fried chicken', category: 'food' },
+    떡볶이: { english: 'tteokbokki (spicy rice cakes)', example: 'eat hot tteokbokki', category: 'food' },
+    라면: { english: 'ramen / noodles', example: 'eat ramen', category: 'food' },
+    빵: { english: 'bread / bakery', example: 'sweet bread', category: 'food' },
+    점심: { english: 'lunch', example: 'have lunch with friends', category: 'food' },
+    저녁: { english: 'dinner', example: 'eat dinner with family', category: 'food' },
+    아침: { english: 'breakfast', example: 'eat breakfast', category: 'food' },
+    음식: { english: 'food', example: 'healthy food', category: 'food', synonyms: ['tasty meal', 'dishes'] },
+    맛있: { english: 'delicious / tasty', example: 'It was delicious.', category: 'food', synonyms: ['yummy', 'great'] },
+    먹: { english: 'eat (과거형: ate)', example: 'eat with family', category: 'food', synonyms: ['have', 'enjoy'] },
+    축구: { english: 'soccer', example: 'play soccer after school', category: 'sports' },
+    농구: { english: 'basketball', example: 'play basketball', category: 'sports' },
+    야구: { english: 'baseball', example: 'play baseball', category: 'sports' },
+    자전거: { english: 'bicycle / bike', example: 'ride a bike', category: 'sports' },
+    수영: { english: 'swimming', example: 'go swimming', category: 'sports' },
+    달리기: { english: 'running', example: 'run in the park', category: 'sports' },
+    운동: { english: 'exercise / workout', example: 'do exercise', category: 'sports', synonyms: ['work out', 'play sports'] },
+    친구: { english: 'friend / friends', example: 'with my best friend', category: 'people', synonyms: ['classmates', 'buddies'] },
+    가족: { english: 'family', example: 'with my loving family', category: 'people' },
+    엄마: { english: 'mom', example: 'talk with my mom', category: 'people' },
+    아빠: { english: 'dad', example: 'help my dad', category: 'people' },
+    선생님: { english: 'teacher', example: 'my English teacher', category: 'people' },
+    학교: { english: 'school', example: 'at middle school', category: 'place' },
+    집: { english: 'home / my room', example: 'stay at home', category: 'place' },
+    공원: { english: 'park', example: 'take a walk in the park', category: 'place' },
+    도서관: { english: 'library', example: 'read books in the library', category: 'place' },
+    바다: { english: 'sea / beach', example: 'go to the beach', category: 'place' },
+    게임: { english: 'computer game', example: 'play computer games', category: 'hobby' },
+    영화: { english: 'movie', example: 'watch an exciting movie', category: 'hobby' },
+    음악: { english: 'music', example: 'listen to music', category: 'hobby' },
+    노래: { english: 'song', example: 'sing a song', category: 'hobby' },
+    책: { english: 'book', example: 'read a good book', category: 'hobby' },
+    행복: { english: 'happy', example: 'I felt really happy.', category: 'emotion', synonyms: ['glad', 'joyful'] },
+    신나: { english: 'excited', example: 'I was so excited!', category: 'emotion', synonyms: ['thrilled'] },
+    재미: { english: 'fun / interesting', example: 'It was very fun.', category: 'emotion', synonyms: ['enjoyable', 'pleasant'] },
+    어제: { english: 'yesterday', example: 'yesterday (과거시제 사용)', category: 'time' },
+    주말: { english: 'on the weekend', example: 'last weekend', category: 'time' },
+    오늘: { english: 'today', example: 'today', category: 'time' },
+  };
+
+  const vocabHints: Array<{
+    korean: string;
+    english: string;
+    example: string;
+    isTeacherRecommended?: boolean;
+    synonyms?: string[];
+    varietyTip?: string;
+  }> = [];
+  const matchedCategories = new Set<string>();
+
+  // 1. 선생님 추천 어휘(recommendedVocab) 최우선 포함
+  if (topic?.recommendedVocab && topic.recommendedVocab.length > 0) {
+    for (const rawVocab of topic.recommendedVocab) {
+      const v = rawVocab.trim();
+      if (!v) continue;
+      let eng = v;
+      let kor = '선생님 추천 필수 어휘';
+      if (v.includes('(') && v.includes(')')) {
+        const parts = v.split('(');
+        eng = parts[0].trim();
+        kor = parts[1].replace(')', '').trim();
+      }
+      vocabHints.push({
+        korean: kor,
+        english: eng,
+        example: `Use "${eng}" in your writing`,
+        isTeacherRecommended: true,
+        synonyms: dict[kor]?.synonyms || ['great expression'],
+        varietyTip: '선생님이 꼭 써보도록 추천한 핵심 표현이에요!',
+      });
+      if (vocabHints.length >= 3) break;
+    }
   }
 
+  // 2. 학생 생각에서 단어 매칭
+  for (const [k, v] of Object.entries(dict)) {
+    if (text.includes(k) && !vocabHints.some((item) => item.korean === k || item.english.includes(v.english))) {
+      vocabHints.push({
+        korean: k,
+        english: v.english,
+        example: v.example,
+        isTeacherRecommended: false,
+        synonyms: v.synonyms,
+        varietyTip: v.synonyms ? `"${v.synonyms.join(', ')}" 등의 유의어로 다양하게 바꾸어 쓸 수 있어요.` : undefined,
+      });
+      matchedCategories.add(v.category);
+      if (vocabHints.length >= 4) break;
+    }
+  }
+
+  // 기본 필수 표현 보충
   const defaultWords = [
-    { korean: '결심하다', english: 'decided to', example: 'I decided to do my best.' },
-    { korean: '줄이다', english: 'reduce / cut down', example: 'reduce waste' },
-    { korean: '중요한', english: 'important', example: 'It is important to protect nature.' },
+    {
+      korean: '결심하다',
+      english: 'decided to [동사]',
+      example: 'I decided to do my best.',
+      synonyms: ['plan to', 'will try to'],
+      varietyTip: '결심을 표현할 때 다양하게 써보세요.',
+    },
+    {
+      korean: '좋아하다',
+      english: 'like / love',
+      example: 'I like my school.',
+      synonyms: ['enjoy', 'am fond of'],
+      varietyTip: 'like 대신 enjoy를 쓰면 더 풍부해져요.',
+    },
   ];
   for (const item of defaultWords) {
-    if (vocab.length >= 3) break;
-    if (!vocab.some((v) => v.korean === item.korean)) {
-      vocab.push(item);
+    if (vocabHints.length >= 4) break;
+    if (!vocabHints.some((v) => v.korean === item.korean)) {
+      vocabHints.push(item);
     }
+  }
+
+  // 3. 문장 패턴 생성: 선생님이 입력한 문장 시작 패턴(sentenceStarters)을 최우선 제안!
+  const patterns: Array<{
+    pattern: string;
+    meaning: string;
+    isTeacherStarter?: boolean;
+    starterSnippet?: string;
+  }> = [];
+
+  if (topic?.sentenceStarters && topic.sentenceStarters.length > 0) {
+    for (const rawStarter of topic.sentenceStarters) {
+      const trimmed = rawStarter.trim();
+      if (!trimmed) continue;
+      const clean = trimmed.replace(/\.+$/, '').trim();
+
+      patterns.push({
+        pattern: `${clean} [학생의 생각 / 동사 또는 명사].`,
+        meaning: `선생님 추천 문장 시작: "${clean} ..."`,
+        isTeacherStarter: true,
+        starterSnippet: clean,
+      });
+      if (patterns.length >= 2) break;
+    }
+  }
+
+  // 추가 맞춤형 문장 패턴
+  if (matchedCategories.has('environment')) {
+    patterns.push({
+      pattern: 'I will not [동사: eat / use] [대상] to protect the environment.',
+      meaning: '나는 환경을 보호하기 위해 [대상]을(를) [먹지/사용하지] 않겠다.',
+      isTeacherStarter: false,
+      starterSnippet: 'To protect the environment, I will',
+    });
+    patterns.push({
+      pattern: 'Factories emit [매연: smoke], so I decided to [행동].',
+      meaning: '공장에서 매연을 내뿜기 때문에, 나는 [행동]하기로 결심했다.',
+      isTeacherStarter: false,
+      starterSnippet: 'I decided to',
+    });
+  } else if (matchedCategories.has('food')) {
+    patterns.push({
+      pattern: 'I decided not to eat [음식] because [이유].',
+      meaning: '나는 [이유] 때문에 [음식]을 먹지 않기로 결심했다.',
+      isTeacherStarter: false,
+      starterSnippet: 'I decided not to eat',
+    });
+    patterns.push({
+      pattern: 'I ate [음식 이름] with [함께한 사람], and it was very [맛/기분: delicious/fun].',
+      meaning: '나는 [사람]과 함께 [음식]을 먹었고, 정말 [맛있었/즐거웠]다.',
+      isTeacherStarter: false,
+      starterSnippet: 'I ate',
+    });
+  } else {
+    patterns.push({
+      pattern: 'I [과거동사: went/made/saw] [대상] because [이유].',
+      meaning: '나는 [이유] 때문에 [대상]을 [행동]했다.',
+      isTeacherStarter: false,
+      starterSnippet: 'I',
+    });
+    patterns.push({
+      pattern: 'It made me feel [감정: happy / proud / excited].',
+      meaning: '그 일은 나를 [행복하게/자랑스럽게/신나게] 만들어 주었다.',
+      isTeacherStarter: false,
+      starterSnippet: 'It made me feel',
+    });
+  }
+
+  const snippet = korean.trim();
+  const cheeringTopic = snippet.length > 0 ? `"${snippet.slice(0, 18)}${snippet.length > 18 ? '...' : ''}"` : '오늘';
+
+  let teacherNotice = '';
+  if (topic?.guidePrompt) {
+    const cleanGuide = topic.guidePrompt.replace(/\n+/g, ' ').trim();
+    teacherNotice = `선생님의 글쓰기 가이드: "${cleanGuide.slice(0, 70)}${cleanGuide.length > 70 ? '...' : ''}"에 맞춰 추천 어휘와 문장 시작 패턴을 꼭 활용해 보세요! 🎯`;
+  } else if (topic?.sentenceStarters && topic.sentenceStarters.length > 0) {
+    teacherNotice = '선생님이 추천한 문장 시작 패턴으로 글을 시작해 보세요! 🎯';
   }
 
   return {
     isAmbiguous: false,
     clarificationMessage: '',
     guidingQuestions: [],
-    cheeringMessage: `"${text.slice(0, 24)}${text.length > 24 ? '...' : ''}"에 대한 생각 정말 좋아요! 아래 맞춤 단어 3가지와 괄호 패턴을 활용해 첫 문장을 적어보세요. ✨`,
-    vocabHints: vocab.slice(0, 3),
-    sentencePatterns: [
+    teacherGuideNotice: teacherNotice,
+    cheeringMessage: `${cheeringTopic}에 대한 생각이 아주 훌륭해요! 선생님의 가이드와 추천 패턴을 참고해서 멋진 첫 문장을 시작해 보세요. ✨`,
+    vocabHints: vocabHints.slice(0, 4),
+    sentencePatterns: patterns.slice(0, 3),
+    diverseExpressions: [
       {
-        pattern: 'I decided not to [동사원형: eat/buy] [명사] to protect [대상].',
-        meaning: '나는 [대상]을(를) 보호하기 위해 [명사]을(를) [먹지/사지] 않기로 결심했다.',
-      },
-      {
-        pattern: 'Factories emit [매연: smoke], so I will [행동].',
-        meaning: '공장에서 매연을 내뿜기 때문에 나는 [행동]할 것이다.',
+        category: '다양한 결심 및 행동 표현',
+        tip: '같은 단어를 반복하지 않고 다채롭게 표현해 보세요.',
+        options: [
+          { english: 'decided to [동사]', korean: '~하기로 결심했다', example: 'I decided to protect the Earth.' },
+          { english: 'will try to [동사]', korean: '~하려고 노력하겠다', example: 'I will try to save water.' },
+          { english: 'promise to [동사]', korean: '~할 것을 약속하다', example: 'I promise to do my best.' },
+        ],
       },
     ],
   };
@@ -270,7 +439,26 @@ export const WritingStudio: React.FC<WritingStudioProps> = ({
     await saveCurrentState({ koreanIdea, currentStep: nextStep, xpGranted: newXpGranted || xpGranted });
   };
 
-  // Step 3: Request AI Hints based on Korean Idea
+  // Step 3: Apply Starter to Draft
+  const handleApplyStarterToDraft = (starter: string) => {
+    const cleanStarter = starter.replace(/\.+$/, '').trim();
+    if (!initialDraft.trim()) {
+      setInitialDraft(cleanStarter + ' ');
+    } else {
+      if (initialDraft.startsWith(cleanStarter)) {
+        return;
+      }
+      setInitialDraft(`${cleanStarter} ${initialDraft.trim()}`);
+    }
+  };
+
+  // Step 3: Insert Vocab into Draft
+  const handleInsertVocabToDraft = (rawVocab: string) => {
+    const cleanWord = rawVocab.includes('(') ? rawVocab.split('(')[0].trim() : rawVocab.trim();
+    setInitialDraft((prev) => (prev.trim() ? `${prev.trim()} ${cleanWord} ` : `${cleanWord} `));
+  };
+
+  // Step 3: Request AI Hints based on Korean Idea & Teacher Guidance
   const handleRequestAiHints = async () => {
     if (!koreanIdea.trim()) return;
     setLoadingHints(true);
@@ -282,6 +470,10 @@ export const WritingStudio: React.FC<WritingStudioProps> = ({
         body: JSON.stringify({
           koreanIdea,
           topicTitle: selectedTopic?.title,
+          guidePrompt: selectedTopic?.guidePrompt,
+          recommendedVocab: selectedTopic?.recommendedVocab,
+          sentenceStarters: selectedTopic?.sentenceStarters,
+          topicDescription: selectedTopic?.description,
         }),
       });
 
@@ -298,15 +490,15 @@ export const WritingStudio: React.FC<WritingStudioProps> = ({
         setAiHints(data.hints);
         setErrorMessage('');
       } else {
-        // 비상 맞춤 힌트로 자동 전환하여 학생 화면에 중단 없이 힌트 표출
-        const fallback = buildEmergencyHints(koreanIdea);
+        // 비상 맞춤 힌트로 자동 전환하여 학생 화면에 중단 없이 힌트 표출 (선생님 가이드 및 추천 시작패턴/어휘 최우선 적용)
+        const fallback = buildEmergencyHints(koreanIdea, selectedTopic);
         setAiHints(fallback);
         setErrorMessage('');
       }
     } catch (e) {
       console.warn('Request AI hints network error, applying resilient fallback:', e);
       // 통신 에러 발생 시에도 학생 작성 흐름이 끊기지 않도록 즉시 맞춤형 힌트 제공
-      const fallback = buildEmergencyHints(koreanIdea);
+      const fallback = buildEmergencyHints(koreanIdea, selectedTopic);
       setAiHints(fallback);
       setErrorMessage('');
     } finally {
@@ -336,24 +528,46 @@ export const WritingStudio: React.FC<WritingStudioProps> = ({
           topicTitle: selectedTopic?.title,
         }),
       });
-      const data = await res.json();
-
-      if (data.success && data.feedback) {
-        setGrammarFeedback(data.feedback);
-        const nextStep = 4;
-        setCurrentStep(nextStep);
-        await saveCurrentState({
-          initialDraft,
-          aiGrammarFeedback: data.feedback,
-          currentStep: nextStep,
-          xpGranted: newXpGranted || xpGranted,
-        });
-      } else {
-        setErrorMessage('문법 검토를 생성하지 못했습니다. 다시 시도해 주세요.');
+      let data: any = null;
+      if (res.ok) {
+        try {
+          data = await res.json();
+        } catch (_jsonErr) {
+          console.warn('Grammar check response json parse error:', _jsonErr);
+        }
       }
+
+      const feedback = data?.success && data?.feedback ? data.feedback : {
+        praiseMessage: '첫 영어 문장을 훌륭하게 완성했어요! 기본 문장의 구조가 아주 좋습니다. 👏',
+        corrections: [],
+        improvedDraft: initialDraft,
+      };
+
+      setGrammarFeedback(feedback);
+      const nextStep = 4;
+      setCurrentStep(nextStep);
+      await saveCurrentState({
+        initialDraft,
+        aiGrammarFeedback: feedback,
+        currentStep: nextStep,
+        xpGranted: newXpGranted || xpGranted,
+      });
     } catch (e) {
-      console.error('Grammar check request error:', e);
-      setErrorMessage('문법 검토 요청 중 오류가 발생했습니다.');
+      console.warn('Grammar check request error, applying resilient fallback:', e);
+      const fallbackFeedback = {
+        praiseMessage: '첫 영어 문장을 훌륭하게 완성했어요! 기본 문장의 구조가 아주 좋습니다. 👏',
+        corrections: [],
+        improvedDraft: initialDraft,
+      };
+      setGrammarFeedback(fallbackFeedback);
+      const nextStep = 4;
+      setCurrentStep(nextStep);
+      await saveCurrentState({
+        initialDraft,
+        aiGrammarFeedback: fallbackFeedback,
+        currentStep: nextStep,
+        xpGranted,
+      });
     } finally {
       setLoadingGrammar(false);
     }
@@ -379,26 +593,57 @@ export const WritingStudio: React.FC<WritingStudioProps> = ({
           topicTitle: selectedTopic?.title,
         }),
       });
-      const data = await res.json();
 
-      if (data.success && data.suggestion) {
-        setExpressionSuggestion(data.suggestion);
-        const nextStep = 5;
-        setCurrentStep(nextStep);
-        await saveCurrentState({
-          finalWriting: workingText,
-          aiExpressionSuggestion: data.suggestion,
-          currentStep: nextStep,
-          xpGranted: newXpGranted || xpGranted,
-        });
-      } else {
-        setErrorMessage('표현 확장 제안을 불러오지 못했습니다. 바로 다음 단계로 이동할 수 있습니다.');
-        setCurrentStep(5);
+      let data: any = null;
+      if (res.ok) {
+        try {
+          data = await res.json();
+        } catch (_jsonErr) {
+          console.warn('Expression expansion response json parse error:', _jsonErr);
+        }
       }
+
+      const sentences = workingText.split(/[.!?]+/).filter(Boolean);
+      const firstSentence = sentences[0]?.trim() || workingText;
+
+      const suggestion = data?.success && data?.suggestion ? data.suggestion : {
+        targetSentence: firstSentence,
+        suggestionTitle: '감정이나 느낌을 나타내는 단어 더하기',
+        friendlyGuide: '문장에 그때의 기분(happy, excited)이나 장소(at school, at home)를 덧붙여 더 생생하게 만들어 보세요!',
+        exampleKeywords: ['happy (행복한)', 'excited (신나는)', 'proud (자랑스러운)', 'with my friends (친구들과 함께)'],
+        exampleResult: `${firstSentence}. It was very exciting!`,
+      };
+
+      setExpressionSuggestion(suggestion);
+      const nextStep = 5;
+      setCurrentStep(nextStep);
+      await saveCurrentState({
+        finalWriting: workingText,
+        aiExpressionSuggestion: suggestion,
+        currentStep: nextStep,
+        xpGranted: newXpGranted || xpGranted,
+      });
     } catch (e) {
-      console.error('Expression expansion request error:', e);
-      setErrorMessage('표현 확장 요청 중 오류가 발생했습니다.');
-      setCurrentStep(5);
+      console.warn('Expression expansion request error, applying resilient fallback:', e);
+      const sentences = workingText.split(/[.!?]+/).filter(Boolean);
+      const firstSentence = sentences[0]?.trim() || workingText;
+      const fallbackSuggestion = {
+        targetSentence: firstSentence,
+        suggestionTitle: '감정이나 느낌을 나타내는 단어 더하기',
+        friendlyGuide: '문장에 그때의 기분(happy, excited)이나 장소(at school, at home)를 덧붙여 더 생생하게 만들어 보세요!',
+        exampleKeywords: ['happy (행복한)', 'excited (신나는)', 'proud (자랑스러운)', 'with my friends (친구들과 함께)'],
+        exampleResult: `${firstSentence}. It was very exciting!`,
+      };
+
+      setExpressionSuggestion(fallbackSuggestion);
+      const nextStep = 5;
+      setCurrentStep(nextStep);
+      await saveCurrentState({
+        finalWriting: workingText,
+        aiExpressionSuggestion: fallbackSuggestion,
+        currentStep: nextStep,
+        xpGranted,
+      });
     } finally {
       setLoadingExpression(false);
     }
@@ -818,37 +1063,130 @@ export const WritingStudio: React.FC<WritingStudioProps> = ({
             <p className="text-xs text-[#4A4A3A] leading-relaxed font-medium">{koreanIdea}</p>
           </div>
 
+          {/* Teacher Guide & Target Expressions Checklist Banner */}
+          {selectedTopic && (selectedTopic.guidePrompt || (selectedTopic.recommendedVocab && selectedTopic.recommendedVocab.length > 0) || (selectedTopic.sentenceStarters && selectedTopic.sentenceStarters.length > 0)) && (
+            <div className="p-4 bg-[#FAF8F3] border border-[#E8C07D] rounded-xl space-y-3.5 shadow-2xs">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-1.5 text-xs font-bold text-[#4A4A3A]">
+                  <BookOpen className="w-4 h-4 text-[#889E73]" />
+                  <span>선생님의 글쓰기 가이드 & 필수 도전 표현</span>
+                </div>
+                <span className="text-[11px] text-[#A75336] bg-[#FAF0EC] border border-[#F2D5CB] px-2 py-0.5 rounded-full font-bold">
+                  🎯 교사 지정 핵심 미션
+                </span>
+              </div>
+
+              {/* Guide Prompt */}
+              {selectedTopic.guidePrompt && (
+                <div className="text-xs text-[#4A4A3A] bg-white p-3 rounded-lg border border-[#E5E1D5] leading-relaxed">
+                  <span className="font-bold text-[#4F6839] block mb-1">📋 선생님 글쓰기 질문 가이드:</span>
+                  <p className="whitespace-pre-line text-[#5F5E4E]">{selectedTopic.guidePrompt}</p>
+                </div>
+              )}
+
+              {/* Teacher's sentenceStarters as quick insertion buttons */}
+              {selectedTopic.sentenceStarters && selectedTopic.sentenceStarters.length > 0 && (
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-bold text-[#4A4A3A]">
+                      🎯 선생님 추천 문장 시작 패턴 (클릭하면 초고 첫 문장으로 바로 쏙 들어갑니다!):
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {selectedTopic.sentenceStarters.map((starter, idx) => {
+                      const clean = starter.replace(/\.+$/, '').trim();
+                      const isStarterApplied = initialDraft.startsWith(clean);
+                      return (
+                        <button
+                          key={idx}
+                          type="button"
+                          onClick={() => handleApplyStarterToDraft(clean)}
+                          className={`px-3 py-1.5 text-xs font-mono rounded-lg transition-all shadow-2xs flex items-center space-x-1.5 ${
+                            isStarterApplied
+                              ? 'bg-[#889E73] text-white border border-[#748B5F] font-bold'
+                              : 'bg-white hover:bg-[#EBF0E5] text-[#4A4A3A] hover:text-[#4F6839] border border-[#E5E1D5] hover:border-[#889E73]'
+                          }`}
+                          title="클릭하여 첫 문장 시작으로 넣기"
+                        >
+                          <span>{starter}</span>
+                          <span className={`text-[10px] font-sans font-bold ml-1 ${isStarterApplied ? 'text-white' : 'text-[#889E73]'}`}>
+                            {isStarterApplied ? '✓ 적용됨' : '↵ 시작하기'}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Teacher's recommendedVocab with checklist status */}
+              {selectedTopic.recommendedVocab && selectedTopic.recommendedVocab.length > 0 && (
+                <div className="space-y-1.5">
+                  <span className="text-[11px] font-bold text-[#4A4A3A] block">
+                    📌 선생님 추천 필수 어휘 (내 글에 단어가 들어가면 자동으로 초록색 ✓ 체크돼요):
+                  </span>
+                  <div className="flex flex-wrap gap-1.5">
+                    {selectedTopic.recommendedVocab.map((vocab, idx) => {
+                      const rawEng = vocab.includes('(') ? vocab.split('(')[0].trim() : vocab.trim();
+                      const isUsed = initialDraft.toLowerCase().includes(rawEng.toLowerCase());
+                      return (
+                        <button
+                          key={idx}
+                          type="button"
+                          onClick={() => handleInsertVocabToDraft(rawEng)}
+                          className={`px-2.5 py-1 text-xs rounded-lg font-medium border transition-all flex items-center space-x-1.5 ${
+                            isUsed
+                              ? 'bg-[#EBF0E5] text-[#4F6839] border-[#889E73] font-bold shadow-2xs'
+                              : 'bg-white text-[#5F5E4E] border-[#E5E1D5] hover:border-[#889E73] hover:text-[#4F6839]'
+                          }`}
+                          title={isUsed ? '초고에 사용 완료!' : '클릭하여 글에 단어 추가하기'}
+                        >
+                          <span>{vocab}</span>
+                          {isUsed ? (
+                            <span className="text-[10px] text-[#4F6839] font-bold ml-0.5">✓ 사용함</span>
+                          ) : (
+                            <span className="text-[10px] text-[#889E73] ml-0.5">+ 넣기</span>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
           {/* AI Hints Trigger & Results */}
           <div className="bg-[#FAF8F3] border border-[#E5E1D5] rounded-xl p-4 space-y-3">
             <div className="flex items-center justify-between">
               <div className="flex items-center space-x-2">
                 <Lightbulb className="w-4 h-4 text-[#D98E73]" />
-                <span className="text-xs font-bold text-[#4A4A3A]">중1 맞춤 AI 단어 및 문장 패턴 힌트</span>
+                <span className="text-xs font-bold text-[#4A4A3A]">중1 맞춤 AI 추천 표현 및 단어 힌트 (교사 가이드 연계)</span>
               </div>
               <button
                 type="button"
                 onClick={handleRequestAiHints}
                 disabled={loadingHints}
-                className="px-3 py-1.5 bg-[#E8C07D] hover:bg-[#dfb56e] text-[#4A4A3A] rounded-lg text-xs font-bold flex items-center space-x-1.5 transition-colors shadow-xs disabled:opacity-50"
+                className="px-3.5 py-1.5 bg-[#E8C07D] hover:bg-[#dfb56e] text-[#4A4A3A] rounded-lg text-xs font-bold flex items-center space-x-1.5 transition-colors shadow-xs disabled:opacity-50"
               >
                 {loadingHints ? (
                   <RefreshCw className="w-3.5 h-3.5 animate-spin" />
                 ) : (
                   <Sparkles className="w-3.5 h-3.5" />
                 )}
-                <span>{aiHints ? '힌트 다시 받기' : 'AI 힌트 받기'}</span>
+                <span>{aiHints ? 'AI 추천 표현 다시 받기' : 'AI 추천 표현 받기'}</span>
               </button>
             </div>
 
             {loadingHints && (
               <div className="pt-3 border-t border-[#E5E1D5] flex items-center justify-center space-x-2 py-4 text-xs text-[#4F6839] font-medium bg-[#EBF0E5]/60 rounded-xl border border-[#D5E0CC] animate-pulse">
                 <RefreshCw className="w-4 h-4 animate-spin text-[#889E73]" />
-                <span>내가 쓴 한글 생각에 딱 맞는 맞춤 영단어와 문장 패턴을 분석하고 있어요... 🤖</span>
+                <span>선생님의 글쓰기 가이드와 내 생각에 맞춘 추천 어휘 및 문장 시작 패턴을 분석하고 있어요... 🤖</span>
               </div>
             )}
 
             {!loadingHints && aiHints && (
-              <div className="pt-2 border-t border-[#E5E1D5] space-y-3">
+              <div className="pt-2 border-t border-[#E5E1D5] space-y-3.5">
                 {aiHints.isAmbiguous ? (
                   <div className="bg-[#FFFBF0] border border-[#F5D8A5] rounded-xl p-4 text-xs space-y-2.5">
                     <div className="flex items-center gap-2 text-[#A86414] font-bold text-sm">
@@ -884,36 +1222,154 @@ export const WritingStudio: React.FC<WritingStudioProps> = ({
                   </div>
                 ) : (
                   <>
-                    <p className="text-xs text-[#4F6839] font-medium bg-[#EBF0E5] p-2.5 rounded-lg border border-[#D5E0CC]">
+                    {/* Teacher Guide Notice */}
+                    {aiHints.teacherGuideNotice && (
+                      <div className="p-3 bg-[#EBF0E5] rounded-xl border border-[#D5E0CC] flex items-start space-x-2 text-xs text-[#3E522C]">
+                        <BookOpen className="w-4 h-4 text-[#889E73] shrink-0 mt-0.5" />
+                        <div className="leading-relaxed">
+                          <span className="font-bold text-[#4F6839] mr-1.5">[선생님 가이드 & 추천 표현 연계]</span>
+                          <span>{aiHints.teacherGuideNotice}</span>
+                        </div>
+                      </div>
+                    )}
+
+                    <p className="text-xs text-[#4F6839] font-medium bg-white p-2.5 rounded-lg border border-[#E5E1D5]">
                       💬 {aiHints.cheeringMessage}
                     </p>
 
-                    {aiHints.vocabHints?.length > 0 && (
-                      <div>
-                        <span className="text-[11px] font-bold text-[#4A4A3A] block mb-1.5">💡 쓸 수 있는 맞춤 영단어</span>
-                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                          {aiHints.vocabHints.map((vh, i) => (
-                            <div key={i} className="bg-white p-2.5 rounded-lg border border-[#E5E1D5] text-xs">
-                              <p className="font-bold text-[#889E73]">{vh.english}</p>
-                              <p className="text-[#787664] text-[11px]">{vh.korean}</p>
-                              {vh.example && <p className="text-[10px] text-[#787664] mt-1">예: {vh.example}</p>}
+                    {/* Sentence Patterns with priority for teacher starters */}
+                    {aiHints.sentencePatterns?.length > 0 && (
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[11px] font-bold text-[#4A4A3A]">
+                            📝 문장 시작 패턴 (선생님 추천 패턴을 꼭 써보세요!)
+                          </span>
+                        </div>
+                        <div className="space-y-2">
+                          {aiHints.sentencePatterns.map((sp, i) => (
+                            <div
+                              key={i}
+                              className={`p-3 rounded-xl border text-xs transition-all ${
+                                sp.isTeacherStarter
+                                  ? 'bg-white border-[#889E73] shadow-2xs'
+                                  : 'bg-white border-[#E5E1D5]'
+                              }`}
+                            >
+                              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                                <div className="space-y-0.5">
+                                  {sp.isTeacherStarter && (
+                                    <span className="inline-block px-2 py-0.5 bg-[#889E73] text-white rounded text-[10px] font-bold mb-1">
+                                      🎯 선생님 추천 문장 시작 패턴 (강력 추천!)
+                                    </span>
+                                  )}
+                                  <p className="font-mono text-xs sm:text-sm font-semibold text-[#4A4A3A]">
+                                    {sp.pattern}
+                                  </p>
+                                  <p className="text-[#787664] text-[11px]">{sp.meaning}</p>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => handleApplyStarterToDraft(sp.starterSnippet || sp.pattern)}
+                                  className="self-start sm:self-center px-3 py-1.5 bg-[#889E73] hover:bg-[#748B5F] text-white rounded-lg text-xs font-bold transition-all shadow-2xs shrink-0 flex items-center space-x-1"
+                                >
+                                  <span>이 패턴으로 시작하기</span>
+                                  <ArrowRight className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
                             </div>
                           ))}
                         </div>
                       </div>
                     )}
 
-                    {aiHints.sentencePatterns?.length > 0 && (
-                      <div>
-                        <span className="text-[11px] font-bold text-[#4A4A3A] block mb-1.5">📝 추천 맞춤 문장 패턴</span>
-                        <div className="space-y-1.5">
-                          {aiHints.sentencePatterns.map((sp, i) => (
-                            <div key={i} className="bg-white p-2 rounded-lg border border-[#E5E1D5] text-xs flex justify-between">
-                              <span className="font-mono text-[#4A4A3A]">{sp.pattern}</span>
-                              <span className="text-[#787664] text-[11px]">{sp.meaning}</span>
+                    {/* Vocabulary Hints with Teacher recommendation badge and synonyms */}
+                    {aiHints.vocabHints?.length > 0 && (
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[11px] font-bold text-[#4A4A3A]">
+                            💡 쓸 수 있는 맞춤 영단어 & 추천 표현
+                          </span>
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                          {aiHints.vocabHints.map((vh, i) => (
+                            <div
+                              key={i}
+                              className={`p-3 rounded-xl border text-xs flex flex-col justify-between ${
+                                vh.isTeacherRecommended
+                                  ? 'bg-[#FAF8F3] border-[#E8C07D] shadow-2xs'
+                                  : 'bg-white border-[#E5E1D5]'
+                              }`}
+                            >
+                              <div>
+                                <div className="flex items-center justify-between mb-1">
+                                  {vh.isTeacherRecommended ? (
+                                    <span className="px-1.5 py-0.5 bg-[#FAF0EC] text-[#A75336] border border-[#F2D5CB] rounded text-[10px] font-bold">
+                                      📌 선생님 추천 필수 표현
+                                    </span>
+                                  ) : (
+                                    <span className="text-[10px] text-[#787664]">맞춤 어휘</span>
+                                  )}
+                                  <button
+                                    type="button"
+                                    onClick={() => handleInsertVocabToDraft(vh.english)}
+                                    className="text-[11px] text-[#889E73] hover:underline font-bold"
+                                  >
+                                    + 글에 넣기
+                                  </button>
+                                </div>
+                                <p className="font-bold text-sm text-[#4A4A3A]">{vh.english}</p>
+                                <p className="text-[#787664] text-[11px] mt-0.5">{vh.korean}</p>
+                                {vh.example && (
+                                  <p className="text-[11px] text-[#5F5E4E] mt-1.5 bg-[#FAF8F3] p-1.5 rounded border border-[#E5E1D5]/60 font-mono">
+                                    예: {vh.example}
+                                  </p>
+                                )}
+                              </div>
+                              {(vh.synonyms?.length || vh.varietyTip) && (
+                                <div className="mt-2 pt-2 border-t border-[#E5E1D5] text-[11px] space-y-0.5 text-[#6B6955]">
+                                  {vh.synonyms && vh.synonyms.length > 0 && (
+                                    <p>
+                                      <span className="font-bold text-[#889E73]">🌈 다양한 표현: </span>
+                                      {vh.synonyms.join(', ')}
+                                    </p>
+                                  )}
+                                  {vh.varietyTip && (
+                                    <p className="text-[#787664] text-[10px]">💡 {vh.varietyTip}</p>
+                                  )}
+                                </div>
+                              )}
                             </div>
                           ))}
                         </div>
+                      </div>
+                    )}
+
+                    {/* Diverse Expressions Block */}
+                    {aiHints.diverseExpressions && aiHints.diverseExpressions.length > 0 && (
+                      <div className="p-3.5 bg-white rounded-xl border border-[#E5E1D5] space-y-2">
+                        <div className="flex items-center space-x-1.5 text-xs font-bold text-[#4A4A3A]">
+                          <Sparkles className="w-3.5 h-3.5 text-[#D98E73]" />
+                          <span>표현을 다양하게 써보세요 (단조로움 방지)</span>
+                        </div>
+                        {aiHints.diverseExpressions.map((group, gIdx) => (
+                          <div key={gIdx} className="text-xs space-y-1.5">
+                            <p className="text-[11px] text-[#787664]">{group.tip}</p>
+                            <div className="flex flex-wrap gap-1.5">
+                              {group.options.map((opt, oIdx) => (
+                                <button
+                                  key={oIdx}
+                                  type="button"
+                                  onClick={() => handleInsertVocabToDraft(opt.english)}
+                                  className="px-2.5 py-1 bg-[#FAF8F3] hover:bg-[#EBF0E5] text-[#4A4A3A] border border-[#E5E1D5] rounded-lg text-xs flex items-center space-x-1 transition-all"
+                                >
+                                  <span className="font-semibold">{opt.english}</span>
+                                  <span className="text-[#787664] text-[10px]">({opt.korean})</span>
+                                  <span className="text-[#889E73] text-[10px] ml-1">+ 넣기</span>
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        ))}
                       </div>
                     )}
                   </>

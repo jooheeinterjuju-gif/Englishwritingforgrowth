@@ -193,17 +193,30 @@ export interface VocabHint {
   korean: string;
   english: string;
   example: string;
+  isTeacherRecommended?: boolean;
+  synonyms?: string[];
+  varietyTip?: string;
 }
 
 export interface SentencePattern {
   pattern: string;
   meaning: string;
+  isTeacherStarter?: boolean;
+  starterSnippet?: string;
+}
+
+export interface DiverseExpressionGroup {
+  category: string;
+  tip: string;
+  options: { english: string; korean: string; example?: string }[];
 }
 
 export interface AiHintsResponse {
   cheeringMessage: string;
+  teacherGuideNotice?: string;
   vocabHints: VocabHint[];
   sentencePatterns: SentencePattern[];
+  diverseExpressions?: DiverseExpressionGroup[];
   isAmbiguous?: boolean;
   clarificationMessage?: string;
   guidingQuestions?: string[];
