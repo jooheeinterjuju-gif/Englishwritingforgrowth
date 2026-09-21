@@ -224,36 +224,11 @@ export const WritingStudio: React.FC<WritingStudioProps> = ({
       if (data.success && data.hints) {
         setAiHints(data.hints);
       } else {
-        setAiHints({
-          cheeringMessage: '정말 멋진 생각이에요! 아래 추천 단어와 쉬운 문장 패턴을 참고해서 첫 문장을 시작해 보세요. ✨',
-          vocabHints: [
-            { korean: '친구들과 함께', english: 'with my friends', example: 'play with my friends' },
-            { korean: '재미있는 / 신나는', english: 'fun / exciting', example: 'It was very exciting!' },
-            { korean: '좋아하다', english: 'like / enjoy', example: 'I like to [동사]' },
-          ],
-          sentencePatterns: [
-            { pattern: 'I [동사] with my friends.', meaning: '나는 친구들과 함께 ~를 해요.' },
-            { pattern: 'It was really [fun / exciting].', meaning: '그것은 정말 [재미있었/신났]어요.' },
-            { pattern: 'I felt [happy / excited].', meaning: '나는 [행복/신남]을 느꼈어요.' },
-          ],
-        });
+        setErrorMessage(data.error || 'AI 힌트를 불러오지 못했습니다. 다시 시도해 주세요.');
       }
     } catch (e) {
       console.error('Request AI hints error:', e);
-      // 통신 중단 시에도 학생이 중단되지 않고 영작을 진행할 수 있도록 안내 힌트 즉시 제공
-      setAiHints({
-        cheeringMessage: '정말 멋진 생각이에요! 아래 추천 단어와 쉬운 문장 패턴을 참고해서 첫 문장을 시작해 보세요. ✨',
-        vocabHints: [
-          { korean: '친구들과 함께', english: 'with my friends', example: 'play with my friends' },
-          { korean: '재미있는 / 신나는', english: 'fun / exciting', example: 'It was very exciting!' },
-          { korean: '좋아하다', english: 'like / enjoy', example: 'I like to [동사]' },
-        ],
-        sentencePatterns: [
-          { pattern: 'I [동사] with my friends.', meaning: '나는 친구들과 함께 ~를 해요.' },
-          { pattern: 'It was really [fun / exciting].', meaning: '그것은 정말 [재미있었/신났]어요.' },
-          { pattern: 'I felt [happy / excited].', meaning: '나는 [행복/신남]을 느꼈어요.' },
-        ],
-      });
+      setErrorMessage('힌트 요청 중 통신 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.');
     } finally {
       setLoadingHints(false);
     }
@@ -787,37 +762,74 @@ export const WritingStudio: React.FC<WritingStudioProps> = ({
 
             {aiHints && (
               <div className="pt-2 border-t border-[#E5E1D5] space-y-3">
-                <p className="text-xs text-[#4F6839] font-medium bg-[#EBF0E5] p-2.5 rounded-lg border border-[#D5E0CC]">
-                  💬 {aiHints.cheeringMessage}
-                </p>
+                {aiHints.isAmbiguous ? (
+                  <div className="bg-[#FFFBF0] border border-[#F5D8A5] rounded-xl p-4 text-xs space-y-2.5">
+                    <div className="flex items-center gap-2 text-[#A86414] font-bold text-sm">
+                      <HelpCircle className="w-4 h-4 text-[#D98E73]" />
+                      <span>한글 생각을 조금만 더 구체적으로 적어볼까요?</span>
+                    </div>
+                    <p className="text-[#684C21] leading-relaxed">
+                      {aiHints.clarificationMessage ||
+                        '어떤 일이나 장소, 기분에 대해 쓰고 싶은지 조금만 더 구체적으로 적어주면 딱 맞는 멋진 영어 힌트를 줄게요!'}
+                    </p>
 
-                {aiHints.vocabHints?.length > 0 && (
-                  <div>
-                    <span className="text-[11px] font-bold text-[#4A4A3A] block mb-1.5">💡 쓸 수 있는 영어 단어</span>
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                      {aiHints.vocabHints.map((vh, i) => (
-                        <div key={i} className="bg-white p-2.5 rounded-lg border border-[#E5E1D5] text-xs">
-                          <p className="font-bold text-[#889E73]">{vh.english}</p>
-                          <p className="text-[#787664] text-[11px]">{vh.korean}</p>
-                          {vh.example && <p className="text-[10px] text-[#787664] mt-1">예: {vh.example}</p>}
-                        </div>
-                      ))}
+                    {aiHints.guidingQuestions && aiHints.guidingQuestions.length > 0 && (
+                      <div className="bg-white/90 p-3 rounded-lg border border-[#F5D8A5]/60 space-y-1.5 mt-1.5">
+                        <span className="font-bold text-[#A86414] block text-[11px]">💡 이렇게 생각을 더 보완해보세요:</span>
+                        <ul className="space-y-1 text-[#684C21] text-[11px] list-disc list-inside">
+                          {aiHints.guidingQuestions.map((q, i) => (
+                            <li key={i}>{q}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+
+                    <div className="pt-1">
+                      <button
+                        type="button"
+                        onClick={() => setCurrentStep(2)}
+                        className="px-3.5 py-1.5 bg-[#889E73] hover:bg-[#748B5F] text-white rounded-lg text-xs font-bold transition-colors inline-flex items-center space-x-1.5 shadow-2xs"
+                      >
+                        <span>2단계로 가서 한글 생각 더 자세히 적기</span>
+                        <ArrowRight className="w-3.5 h-3.5" />
+                      </button>
                     </div>
                   </div>
-                )}
+                ) : (
+                  <>
+                    <p className="text-xs text-[#4F6839] font-medium bg-[#EBF0E5] p-2.5 rounded-lg border border-[#D5E0CC]">
+                      💬 {aiHints.cheeringMessage}
+                    </p>
 
-                {aiHints.sentencePatterns?.length > 0 && (
-                  <div>
-                    <span className="text-[11px] font-bold text-[#4A4A3A] block mb-1.5">📝 추천 문장 패턴</span>
-                    <div className="space-y-1.5">
-                      {aiHints.sentencePatterns.map((sp, i) => (
-                        <div key={i} className="bg-white p-2 rounded-lg border border-[#E5E1D5] text-xs flex justify-between">
-                          <span className="font-mono text-[#4A4A3A]">{sp.pattern}</span>
-                          <span className="text-[#787664] text-[11px]">{sp.meaning}</span>
+                    {aiHints.vocabHints?.length > 0 && (
+                      <div>
+                        <span className="text-[11px] font-bold text-[#4A4A3A] block mb-1.5">💡 쓸 수 있는 맞춤 영단어</span>
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                          {aiHints.vocabHints.map((vh, i) => (
+                            <div key={i} className="bg-white p-2.5 rounded-lg border border-[#E5E1D5] text-xs">
+                              <p className="font-bold text-[#889E73]">{vh.english}</p>
+                              <p className="text-[#787664] text-[11px]">{vh.korean}</p>
+                              {vh.example && <p className="text-[10px] text-[#787664] mt-1">예: {vh.example}</p>}
+                            </div>
+                          ))}
                         </div>
-                      ))}
-                    </div>
-                  </div>
+                      </div>
+                    )}
+
+                    {aiHints.sentencePatterns?.length > 0 && (
+                      <div>
+                        <span className="text-[11px] font-bold text-[#4A4A3A] block mb-1.5">📝 추천 맞춤 문장 패턴</span>
+                        <div className="space-y-1.5">
+                          {aiHints.sentencePatterns.map((sp, i) => (
+                            <div key={i} className="bg-white p-2 rounded-lg border border-[#E5E1D5] text-xs flex justify-between">
+                              <span className="font-mono text-[#4A4A3A]">{sp.pattern}</span>
+                              <span className="text-[#787664] text-[11px]">{sp.meaning}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </>
                 )}
               </div>
             )}

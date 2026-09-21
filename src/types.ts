@@ -204,4 +204,7 @@ export interface AiHintsResponse {
   cheeringMessage: string;
   vocabHints: VocabHint[];
   sentencePatterns: SentencePattern[];
+  isAmbiguous?: boolean;
+  clarificationMessage?: string;
+  guidingQuestions?: string[];
 }

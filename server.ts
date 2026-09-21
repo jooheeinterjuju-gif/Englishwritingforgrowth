@@ -32,15 +32,13 @@ function getGeminiClient(): GoogleGenAI {
 
 // 2. [자동 복구 멀티 모델 캐스케이드 (안정성)]
 // Priority order:
-// 1. gemini-3.6-flash (Middle school tutoring & Korean fluency)
-// 2. gemini-3.8-flash (Standard recommended text model per Gemini API skill)
-// 3. gemini-3.1-flash-lite (High-throughput, ultra-reliable fallback)
-// 4. gemini-3.7-flash (Emergency auxiliary model)
+// 1. gemini-3.8-flash (Standard recommended text model per Gemini API skill)
+// 2. gemini-3.1-flash-lite (High-throughput, ultra-reliable fallback)
+// 3. gemini-flash-latest (General flash fallback)
 const MODEL_CASCADE = [
-  "gemini-3.6-flash",
   "gemini-3.8-flash",
   "gemini-3.1-flash-lite",
-  "gemini-3.7-flash",
+  "gemini-flash-latest",
 ];
 const PRIMARY_MODEL = MODEL_CASCADE[0];
 const FALLBACK_MODEL = MODEL_CASCADE[1];
@@ -107,60 +105,131 @@ async function generateWithDualModelFallback(options: DualModelOptions): Promise
 }
 
 // 중학교 1학년 맞춤형 오프라인/네트워크 장애 대비 힌트 생성기
+// 입력 문장의 모호성(너무 짧음, 단순 자음, 무성의한 단어) 판별 함수
+function isKoreanInputAmbiguous(text: string): { isAmbiguous: boolean; reason?: string } {
+  const trimmed = (text || "").trim();
+
+  // 1. 글자 수 4자 미만 (단어 1개 수준)
+  if (trimmed.length < 4) {
+    return { isAmbiguous: true, reason: "too_short" };
+  }
+
+  // 2. 한글 완성형 음절이 거의 없고 자음/모음/기호만 있는 경우 (ㅋㅋㅋ, ㅎㅎ, ㅇㅇ, ㅠㅠ 등)
+  const hasHangulSyllable = /[가-힣]/.test(trimmed);
+  const onlyConsonantsOrPunct = /^[ㄱ-ㅎㅏ-ㅣ0-9\s!?.,~^;:\-_+@#%&*()]+$/.test(trimmed);
+  if (!hasHangulSyllable || onlyConsonantsOrPunct) {
+    return { isAmbiguous: true, reason: "consonants_only" };
+  }
+
+  // 3. 무성의/회피성 단어 목록
+  const evasivePatterns = [
+    /^몰라(요)?$/,
+    /^그냥(이요)?$/,
+    /^아무거나$/,
+    /^생각\s*(안\s*남|없음)$/,
+    /^글쎄(요)?$/,
+    /^귀찮(아|음)$/,
+    /^하기\s*싫어/,
+    /^asdf/i,
+  ];
+  if (evasivePatterns.some((pattern) => pattern.test(trimmed))) {
+    return { isAmbiguous: true, reason: "evasive" };
+  }
+
+  return { isAmbiguous: false };
+}
+
+// 중학교 1학년 맞춤형 오프라인/네트워크 장애 대비 동적 힌트 생성기
 function generateFallbackHints(koreanIdea: string, topicTitle?: string) {
-  const dict: Record<string, { english: string; example: string }> = {
-    축구: { english: "soccer", example: "play soccer (축구를 하다)" },
-    농구: { english: "basketball", example: "play basketball (농구를 하다)" },
-    야구: { english: "baseball", example: "play baseball (야구를 하다)" },
-    운동: { english: "exercise / workout", example: "do exercise (운동을 하다)" },
-    달리기: { english: "running / run", example: "go running (달리기를 하다)" },
-    수영: { english: "swimming / swim", example: "go swimming (수영하러 가다)" },
-    친구: { english: "friend", example: "with my friends (친구들과 함께)" },
-    가족: { english: "family", example: "with my family (가족과 함께)" },
-    부모: { english: "parents", example: "my parents (부모님)" },
-    엄마: { english: "mom", example: "my mom (우리 엄마)" },
-    아빠: { english: "dad", example: "my dad (우리 아빠)" },
-    동생: { english: "brother / sister", example: "my brother / sister (동생)" },
-    학교: { english: "school", example: "at school (학교에서)" },
-    선생: { english: "teacher", example: "my teacher (선생님)" },
-    수업: { english: "class", example: "in English class (영어 수업에서)" },
-    공부: { english: "study", example: "study hard (열심히 공부하다)" },
-    숙제: { english: "homework", example: "do homework (숙제를 하다)" },
-    시험: { english: "test / exam", example: "take a test (시험을 보다)" },
-    점심: { english: "lunch", example: "eat lunch (점심을 먹다)" },
-    저녁: { english: "dinner", example: "have dinner (저녁을 먹다)" },
-    아침: { english: "breakfast / morning", example: "in the morning (아침에)" },
-    음식: { english: "food", example: "delicious food (맛있는 음식)" },
-    피자: { english: "pizza", example: "eat pizza (피자를 먹다)" },
-    치킨: { english: "chicken", example: "eat chicken (치킨을 먹다)" },
-    떡볶이: { english: "tteokbokki (spicy rice cakes)", example: "eat tteokbokki (떡볶이를 먹다)" },
-    게임: { english: "game", example: "play computer games (게임을 하다)" },
-    영화: { english: "movie", example: "watch a movie (영화를 보다)" },
-    음악: { english: "music", example: "listen to music (음악을 듣다)" },
-    노래: { english: "song", example: "sing a song (노래를 부르다)" },
-    책: { english: "book", example: "read a book (책을 읽다)" },
-    독서: { english: "reading", example: "like reading books (책 읽기를 좋아하다)" },
-    여행: { english: "trip / travel", example: "go on a trip (여행을 가다)" },
-    바다: { english: "sea / beach", example: "go to the beach (바다에 가다)" },
-    산: { english: "mountain", example: "climb a mountain (등산하다)" },
-    공원: { english: "park", example: "in the park (공원에서)" },
-    자전거: { english: "bicycle / bike", example: "ride a bike (자전거를 타다)" },
-    동물: { english: "animal", example: "cute animals (귀여운 동물들)" },
-    강아지: { english: "puppy / dog", example: "walk with my puppy (강아지와 산책하다)" },
-    고양이: { english: "cat", example: "cute cat (귀여운 고양이)" },
-    주말: { english: "weekend", example: "on the weekend (주말에)" },
-    어제: { english: "yesterday", example: "yesterday (어제 - 과거시제 사용)" },
-    오늘: { english: "today", example: "today (오늘)" },
-    내일: { english: "tomorrow", example: "tomorrow (내일)" },
-    행복: { english: "happy", example: "I felt happy. (행복했어요)" },
-    신나: { english: "excited / exciting", example: "It was exciting! (정말 신났어요!)" },
-    재미: { english: "fun / interesting", example: "It was really fun. (정말 재미있었어요)" },
-    좋아: { english: "like / enjoy", example: "I like to ~ (~하는 것을 좋아해요)" },
-    기분: { english: "feeling / mood", example: "in a good mood (기분이 좋은)" },
+  const ambiguity = isKoreanInputAmbiguous(koreanIdea);
+
+  // 모호한 입력인 경우 구체적 재입력 요청 반환
+  if (ambiguity.isAmbiguous) {
+    return {
+      isAmbiguous: true,
+      clarificationMessage:
+        "어떤 일이나 장소, 기분에 대해 쓰고 싶은지 조금만 더 구체적으로 적어줄 수 있나요? (예: '어제 점심에 친구와 떡볶이를 먹었는데 정말 맛있었다'처럼 누가, 무엇을 했는지 알려주면 딱 맞는 멋진 영어 힌트를 줄게요!)",
+      guidingQuestions: [
+        "언제, 어디서 있었던 일이나 생각인가요?",
+        "누구와 함께 무엇을 보거나 행동했나요?",
+        "그 순간 어떤 기분이나 생각이 들었나요?",
+      ],
+      cheeringMessage: "생각을 조금만 더 구체적인 문장으로 적어주면 딱 맞는 영어 힌트를 알려줄게요! 😊",
+      vocabHints: [],
+      sentencePatterns: [],
+    };
+  }
+
+  // 동적 어휘 매핑 사전 (중1 교육과정 중심)
+  const dict: Record<string, { english: string; example: string; category: string }> = {
+    // 음식 / 먹거리
+    피자: { english: "pizza", example: "eat delicious pizza", category: "food" },
+    치킨: { english: "chicken", example: "eat fried chicken", category: "food" },
+    떡볶이: { english: "tteokbokki (spicy rice cakes)", example: "eat hot tteokbokki", category: "food" },
+    라면: { english: "ramen / noodles", example: "cook ramen", category: "food" },
+    빵: { english: "bread / bakery", example: "sweet bread", category: "food" },
+    점심: { english: "lunch", example: "have lunch (점심을 먹다)", category: "food" },
+    저녁: { english: "dinner", example: "eat dinner with family", category: "food" },
+    아침: { english: "breakfast", example: "eat breakfast (아침을 먹다)", category: "food" },
+    음식: { english: "food", example: "delicious food (맛있는 음식)", category: "food" },
+    맛있: { english: "delicious / tasty", example: "It was really delicious.", category: "food" },
+    먹: { english: "ate (eat의 과거형: 먹었다)", example: "ate with my family", category: "food" },
+
+    // 운동 / 스포츠
+    축구: { english: "soccer", example: "play soccer (축구를 하다)", category: "sports" },
+    농구: { english: "basketball", example: "play basketball (농구를 하다)", category: "sports" },
+    야구: { english: "baseball", example: "play baseball (야구를 하다)", category: "sports" },
+    자전거: { english: "bicycle / bike", example: "ride a bike (자전거를 타다)", category: "sports" },
+    수영: { english: "swimming", example: "go swimming (수영하러 가다)", category: "sports" },
+    달리기: { english: "running", example: "run fast (빨리 달리다)", category: "sports" },
+    운동: { english: "exercise / sports", example: "do exercise (운동을 하다)", category: "sports" },
+
+    // 인물 / 관계
+    친구: { english: "friend / friends", example: "with my close friends", category: "people" },
+    가족: { english: "family", example: "with my family (가족과 함께)", category: "people" },
+    엄마: { english: "mom", example: "talk with my mom (엄마와 이야기하다)", category: "people" },
+    아빠: { english: "dad", example: "help my dad (아빠를 돕다)", category: "people" },
+    동생: { english: "brother / sister", example: "play with my brother/sister", category: "people" },
+    선생님: { english: "teacher", example: "my English teacher (영어 선생님)", category: "people" },
+
+    // 장소
+    학교: { english: "school", example: "at school (학교에서)", category: "place" },
+    집: { english: "home / my house", example: "at home (집에서)", category: "place" },
+    공원: { english: "park", example: "walk in the park (공원에서 걷다)", category: "place" },
+    도서관: { english: "library", example: "study in the library", category: "place" },
+    바다: { english: "sea / beach", example: "go to the beach (바다에 가다)", category: "place" },
+    산: { english: "mountain", example: "climb a mountain (등산하다)", category: "place" },
+    방: { english: "room / my bedroom", example: "clean my room (내 방을 청소하다)", category: "place" },
+
+    // 취미 / 활동
+    게임: { english: "computer game", example: "play video games (게임을 하다)", category: "hobby" },
+    영화: { english: "movie", example: "watch a movie (영화를 보다)", category: "hobby" },
+    음악: { english: "music", example: "listen to music (음악을 듣다)", category: "hobby" },
+    노래: { english: "song", example: "sing a song (노래를 부르다)", category: "hobby" },
+    책: { english: "book", example: "read a comic book (책을 읽다)", category: "hobby" },
+    그림: { english: "drawing / picture", example: "draw a picture (그림을 그리다)", category: "hobby" },
+    공부: { english: "study", example: "study hard (열심히 공부하다)", category: "hobby" },
+    숙제: { english: "homework", example: "finish my homework (숙제를 끝내다)", category: "hobby" },
+    쇼핑: { english: "shopping", example: "go shopping (쇼핑하러 가다)", category: "hobby" },
+
+    // 감정 / 상태
+    행복: { english: "happy", example: "I felt very happy.", category: "emotion" },
+    신나: { english: "excited", example: "I was so excited! (정말 신났다!)", category: "emotion" },
+    재미: { english: "fun / interesting", example: "It was really fun. (정말 재미있었다)", category: "emotion" },
+    힘들: { english: "tired / hard", example: "I was tired, but happy.", category: "emotion" },
+    슬프: { english: "sad", example: "I felt sad.", category: "emotion" },
+    놀라: { english: "surprised", example: "I was surprised.", category: "emotion" },
+
+    // 시간
+    어제: { english: "yesterday", example: "yesterday (어제 - 과거동사 사용)", category: "time" },
+    주말: { english: "on the weekend", example: "last weekend (지난 주말에)", category: "time" },
+    오늘: { english: "today", example: "today (오늘)", category: "time" },
+    방학: { english: "vacation", example: "during vacation (방학 동안)", category: "time" },
   };
 
   const vocabHints: Array<{ korean: string; english: string; example: string }> = [];
   const text = (koreanIdea + " " + (topicTitle || "")).toLowerCase();
+  const matchedCategories = new Set<string>();
 
   for (const [k, v] of Object.entries(dict)) {
     if (text.includes(k)) {
@@ -169,35 +238,76 @@ function generateFallbackHints(koreanIdea: string, topicTitle?: string) {
         english: v.english,
         example: v.example,
       });
+      matchedCategories.add(v.category);
       if (vocabHints.length >= 4) break;
     }
   }
 
-  if (vocabHints.length < 3) {
-    const defaults = [
-      { korean: "생각하다", english: "think", example: "I think ~ (~라고 생각해요)" },
-      { korean: "좋아하다", english: "like / love", example: "I like to [동사] (~하는 것을 좋아해요)" },
-      { korean: "재미있는", english: "fun / exciting", example: "It was so fun! (정말 재미있었어요!)" },
-      { korean: "시간을 보내다", english: "spend time", example: "spend time with friends (친구들과 시간을 보내다)" },
-    ];
-    for (const d of defaults) {
-      if (!vocabHints.some((v) => v.korean === d.korean)) {
-        vocabHints.push(d);
-        if (vocabHints.length >= 3) break;
-      }
+  // 만약 사전에 매칭되지 않은 특수 단어가 있다면 기본 중1 표현 추출
+  if (vocabHints.length < 2) {
+    if (text.includes("좋") || text.includes("좋아")) {
+      vocabHints.push({ korean: "좋아하다", english: "like / love", example: "I like to [동사]" });
+    }
+    if (text.includes("갔") || text.includes("가다")) {
+      vocabHints.push({ korean: "갔다", english: "went (go의 과거형)", example: "I went to [장소]" });
+    }
+    if (text.includes("보") || text.includes("봤")) {
+      vocabHints.push({ korean: "보았다", english: "saw / watched", example: "I watched [대상]" });
+    }
+    if (text.includes("만들")) {
+      vocabHints.push({ korean: "만들었다", english: "made (make의 과거형)", example: "I made [음식/물건]" });
     }
   }
 
-  const sentencePatterns = [
-    { pattern: "I usually [동사] with my friends.", meaning: "나는 보통 친구들과 함께 ~를 해요." },
-    { pattern: "It made me feel [happy / excited].", meaning: "그것은 나를 [행복하게/신나게] 만들어 주었어요." },
-    { pattern: "I want to [동사] again next time.", meaning: "다음 번에 또 ~하고 싶어요." },
-  ];
+  // 동적 문장 패턴 생성 (학생의 소재에 맞춤)
+  const sentencePatterns: Array<{ pattern: string; meaning: string }> = [];
+
+  if (matchedCategories.has("food")) {
+    sentencePatterns.push({
+      pattern: "I ate [음식 이름] and it was really [맛/느낌: delicious/spicy].",
+      meaning: "나는 [음식]을 먹었고 그것은 정말 [맛있/매웠]어요.",
+    });
+  }
+
+  if (matchedCategories.has("sports")) {
+    sentencePatterns.push({
+      pattern: "I played [운동] with my [사람] and had a great time.",
+      meaning: "나는 [사람]과 [운동]을 했고 정말 즐거운 시간을 보냈어요.",
+    });
+  }
+
+  if (matchedCategories.has("place")) {
+    sentencePatterns.push({
+      pattern: "I went to [장소] because I wanted to [하고 싶었던 행동].",
+      meaning: "나는 [행동]을 하고 싶어서 [장소]에 갔어요.",
+    });
+  }
+
+  if (matchedCategories.has("hobby")) {
+    sentencePatterns.push({
+      pattern: "I enjoyed [취미/활동] in my free time.",
+      meaning: "나는 자유 시간에 [취미/활동]을 즐겼어요.",
+    });
+  }
+
+  if (sentencePatterns.length === 0) {
+    sentencePatterns.push({
+      pattern: "I [과거동사] [대상] [시간/장소: yesterday / at home].",
+      meaning: "나는 [시간/장소]에 [대상]을 [행동]했어요.",
+    });
+    sentencePatterns.push({
+      pattern: "It made me feel [감정: happy / proud / excited].",
+      meaning: "그것은 나를 [행복하게/뿌듯하게/신나게] 만들어 주었어요.",
+    });
+  }
 
   return {
-    cheeringMessage: "정말 멋진 생각이에요! 추천 단어와 쉬운 문장 패턴을 참고해서 첫 문장을 가볍게 적어보세요. ✨",
-    vocabHints,
-    sentencePatterns,
+    isAmbiguous: false,
+    clarificationMessage: "",
+    guidingQuestions: [],
+    cheeringMessage: `"${koreanIdea.slice(0, 20)}${koreanIdea.length > 20 ? "..." : ""}"에 대한 생각 정말 좋아요! 아래 맞춤 단어와 괄호 패턴을 채워 첫 문장을 적어보세요. ✨`,
+    vocabHints: vocabHints.slice(0, 4),
+    sentencePatterns: sentencePatterns.slice(0, 3),
   };
 }
 
@@ -367,60 +477,139 @@ ${customTheme ? `선생님이 희망하는 테마/키워드: ${customTheme}` : "
 // 6. Korean Idea to English Writing Hints (한글 기반 단어/구문 힌트)
 app.post("/api/gemini/hints", async (req, res) => {
   const { koreanIdea, topicTitle } = req.body;
-  if (!koreanIdea) {
+  if (!koreanIdea || typeof koreanIdea !== "string" || !koreanIdea.trim()) {
     return res.status(400).json({ success: false, error: "koreanIdea is required" });
   }
 
+  const trimmedInput = koreanIdea.trim();
+
+  // 1차 모호성 검사 (너무 짧거나 자음/무의미한 단어인 경우 친절한 안내와 생각 유도 질문 즉시 반환)
+  const quickAmbiguity = isKoreanInputAmbiguous(trimmedInput);
+  if (quickAmbiguity.isAmbiguous) {
+    const fallbackHints = generateFallbackHints(trimmedInput, topicTitle);
+    return res.json({
+      success: true,
+      hints: fallbackHints,
+      modelUsed: "instant-validation",
+      isFallback: false,
+    });
+  }
+
   try {
+    const systemInstruction = `You are an expert bilingual Korean-English writing coach for Korean 7th-grade students (대한민국 중학교 1학년 / 만 13세).
+Your primary task is to deeply and dynamically analyze the student's Korean input ({{student_input}}) to generate personalized, level-appropriate English vocabulary and structural sentence patterns.
+
+[CRITICAL INSTRUCTIONS & STRICT CONSTRAINTS]
+1. STRICTLY DYNAMIC CONTENT EXTRACTION (ANTI-BOILERPLATE MANDATE):
+   - You MUST analyze the specific entities, nouns, verbs, emotions, and context provided in {{student_input}}.
+   - You are STRICTLY FORBIDDEN from returning predefined, stock filler expressions (such as generic "play with my friends", "spend time", "like/enjoy", or "happy/excited") unless the student's Korean text explicitly describes those exact subjects.
+   - Every single vocabulary hint and sentence pattern MUST directly trace back to the student's unique words and thoughts.
+
+2. AMBIGUITY & VAGUENESS DETECTION (정확한 입력 요청):
+   - You must evaluate whether the student's input contains enough concrete information (who, what, where, action, or feeling) to produce meaningful English hints.
+   - The input MUST be flagged as ambiguous ("isAmbiguous": true) if it meets ANY of these criteria:
+     * Too short: Less than 4-5 Korean characters or only 1-2 fragmented words (e.g., "좋다", "밥", "어제", "축구", "그냥").
+     * Consonant/vowel/symbol only: Slang like "ㅋㅋㅋ", "ㅎㅎ", "ㅇㅇ", "ㅠㅠ", "^^", or keyboard smashing.
+     * Evasive or non-informative phrases: "몰라요", "생각 안 남", "아무거나", "글쓰기 싫어", "없음".
+     * Incoherent or fragmented input that does not convey an action, subject, or context.
+   - WHEN AMBIGUOUS ("isAmbiguous": true):
+     * "clarificationMessage": Provide an encouraging, gentle explanation in Korean asking the student to write more specifically (e.g. explain that telling 'who, when, what was done, or how they felt' allows the AI to provide great custom hints, and give a friendly example like "어제 점심에 친구와 떡볶이를 먹었는데 정말 맛있었다").
+     * "guidingQuestions": Provide 2-3 tailored Korean guiding questions related to the topic to prompt their ideas.
+     * "cheeringMessage": Friendly short cheer asking for a bit more detail.
+     * "vocabHints": [] (empty array)
+     * "sentencePatterns": [] (empty array)
+   - WHEN CLEAR AND MEANINGFUL ("isAmbiguous": false):
+     * "clarificationMessage": ""
+     * "guidingQuestions": []
+     * "cheeringMessage": A tailored, non-generic cheer referencing the student's specific topic or activity.
+     * "vocabHints": Exactly 3-5 vocabulary hints mapped directly to words in {{student_input}}.
+     * "sentencePatterns": Exactly 2-3 scaffolded sentence patterns with bracketed placeholders (e.g. "[동사]", "[음식]", "[장소]") fitting the student's exact sentence structure.
+
+3. GRADE 7 CURRICULUM LEVEL (중1 수준):
+   - Keep vocabulary within the Ministry of Education 800 basic vocabulary words.
+   - If past actions are described, provide the past tense with the root verb (e.g. "ate (eat의 과거형: 먹었다)").
+   - DO NOT provide a finished translation of the whole sentence. Always provide fill-in-the-blank brackets so the student constructs their own draft.
+
+4. OUTPUT FORMAT:
+   - Output MUST strictly be valid JSON conforming to the requested schema with no surrounding commentary or markdown code blocks.`;
+
     const prompt = `
-당신은 대한민국 중학교 1학년 학생을 돕는 친절한 영어 글쓰기 튜터입니다.
-학생이 쓴 한글 생각 내용을 바탕으로, 학생이 직접 기초 영작을 시도할 수 있도록 쉬운 단어와 기초 문장 패턴 힌트를 제공하세요.
-
-[규칙]
-- 절대로 전체 완성된 영어 문장을 통째로 번역해주지 마세요! 학생이 스스로 조합할 수 있도록 힌트만 줍니다.
-- 중1 수준(중학 필수 기본 어휘 및 be동사, 일반동사 현재/과거시제, like to V 등)에 맞추세요.
-
 [글쓰기 주제]
 ${topicTitle || "자유 주제"}
 
-[학생의 한글 생각]
-${koreanIdea}
+[학생이 작성한 한글 생각 ({{student_input}})]
+"""
+${trimmedInput}
+"""
 
-반드시 아래 JSON 형식으로 응답하세요:
-\`\`\`json
+위 학생의 입력값({{student_input}})을 동적으로 정밀 분석하여, 아래 규격에 맞는 JSON으로 응답하세요.
+
+[응답 포맷 1: 학생 입력이 모호하거나 너무 짧은 경우]
 {
-  "cheeringMessage": "학생을 응원하는 친절한 한마디 (예: 멋진 생각이에요! 차근차근 쉬운 단어로 시작해봐요.)",
+  "isAmbiguous": true,
+  "clarificationMessage": "구체적인 한국어 보완 요청 안내문 (예: '어떤 일이나 장소, 기분에 대해 쓰고 싶은지 조금만 더 구체적으로 적어줄 수 있나요? (예: \"어제 점심에 가족과 김밥을 만들었는데 재미있었다\"처럼 누가, 무엇을 했는지 적어주면 딱 맞는 멋진 영어 힌트를 줄게요!)')",
+  "guidingQuestions": [
+    "생각을 이끌어내는 질문 1 (예: 언제, 어디서 있었던 일인가요?)",
+    "생각을 이끌어내는 질문 2 (예: 누구와 함께 무엇을 했나요?)",
+    "생각을 이끌어내는 질문 3 (예: 그 순간 어떤 기분이나 생각이 들었나요?)"
+  ],
+  "cheeringMessage": "구체적인 생각을 조금만 더 적어주면 딱 맞는 영어 힌트를 준비해 줄게요! 😊",
+  "vocabHints": [],
+  "sentencePatterns": []
+}
+
+[응답 포맷 2: 학생 입력에 구체적인 내용과 상황이 담겨 있는 경우]
+{
+  "isAmbiguous": false,
+  "clarificationMessage": "",
+  "guidingQuestions": [],
+  "cheeringMessage": "학생의 구체적인 소재(활동, 음식, 감정 등)를 직접 언급하며 격려하는 맞춤형 한마디",
   "vocabHints": [
-    {"korean": "한글 표현", "english": "easy English word", "example": "간단 예문/조합 팁"},
-    {"korean": "한글 표현", "english": "easy English word", "example": "간단 예문/조합 팁"},
-    {"korean": "한글 표현", "english": "easy English word", "example": "간단 예문/조합 팁"}
+    {
+      "korean": "{{student_input}}에서 추출한 한글 단어/표현",
+      "english": "중1 수준 영단어 (과거 시제 필요 시 과거형 명시)",
+      "example": "문장에서 바로 쓸 수 있는 짧은 예시 표현"
+    }
   ],
   "sentencePatterns": [
-    {"pattern": "I usually [동사] with my friends.", "meaning": "나는 보통 친구들과 ~해요."},
-    {"pattern": "It makes me [형용사: happy/excited].", "meaning": "그것은 나를 ~하게 만들어요."}
+    {
+      "pattern": "학생의 한글 문장 구조에 1:1로 맞춘 빈칸 괄호 패턴 (예: I [과거동사] [대상] at [장소].)",
+      "meaning": "해당 문장 패턴의 한글 뜻"
+    }
   ]
 }
-\`\`\`
 `;
 
     const result = await generateWithDualModelFallback({
       contents: prompt,
-      systemInstruction: "You are a supportive middle school English tutor. Always output strictly valid JSON.",
+      systemInstruction,
       responseMimeType: "application/json",
-      temperature: 0.6,
+      temperature: 0.5,
     });
 
     const parsed = cleanAndParseJson(result.text, null);
-    if (parsed && parsed.cheeringMessage && Array.isArray(parsed.vocabHints)) {
-      return res.json({ success: true, hints: parsed, modelUsed: result.modelUsed, isFallback: result.isFallback });
+    if (parsed && (parsed.cheeringMessage || parsed.clarificationMessage)) {
+      return res.json({
+        success: true,
+        hints: {
+          isAmbiguous: Boolean(parsed.isAmbiguous),
+          clarificationMessage: parsed.clarificationMessage || "",
+          guidingQuestions: Array.isArray(parsed.guidingQuestions) ? parsed.guidingQuestions : [],
+          cheeringMessage: parsed.cheeringMessage || "정말 멋진 생각이에요! 차근차근 시작해 보세요. ✨",
+          vocabHints: Array.isArray(parsed.vocabHints) ? parsed.vocabHints : [],
+          sentencePatterns: Array.isArray(parsed.sentencePatterns) ? parsed.sentencePatterns : [],
+        },
+        modelUsed: result.modelUsed,
+        isFallback: result.isFallback,
+      });
     }
 
-    // JSON 형태가 불완전할 경우 안전한 힌트 생성기 호출
-    const fallbackHints = generateFallbackHints(koreanIdea, topicTitle);
+    // JSON 형태가 불완전할 경우 안전한 동적 힌트 생성기 호출
+    const fallbackHints = generateFallbackHints(trimmedInput, topicTitle);
     return res.json({ success: true, hints: fallbackHints, modelUsed: result.modelUsed + "-fallback", isFallback: true });
   } catch (error: any) {
     console.warn("Hints generation API error, activating fallback generator:", error?.message);
-    const fallbackHints = generateFallbackHints(koreanIdea, topicTitle);
+    const fallbackHints = generateFallbackHints(trimmedInput, topicTitle);
     return res.json({
       success: true,
       hints: fallbackHints,
