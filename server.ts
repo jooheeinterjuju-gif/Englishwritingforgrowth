@@ -32,13 +32,13 @@ function getGeminiClient(): GoogleGenAI {
 
 // 2. [자동 복구 멀티 모델 캐스케이드 (안정성)]
 // Priority order:
-// 1. gemini-3.8-flash (Standard recommended text model per Gemini API skill)
-// 2. gemini-3.1-flash-lite (High-throughput, ultra-reliable fallback)
-// 3. gemini-flash-latest (General flash fallback)
+// 1. gemini-3.1-flash-lite (Ultra-fast ~1.2s, stable high throughput, no 503 demand spikes)
+// 2. gemini-flash-latest (General stable flash fallback)
+// 3. gemini-3.8-flash (Standard advanced text model)
 const MODEL_CASCADE = [
-  "gemini-3.8-flash",
   "gemini-3.1-flash-lite",
   "gemini-flash-latest",
+  "gemini-3.8-flash",
 ];
 const PRIMARY_MODEL = MODEL_CASCADE[0];
 const FALLBACK_MODEL = MODEL_CASCADE[1];
@@ -162,18 +162,35 @@ function generateFallbackHints(koreanIdea: string, topicTitle?: string) {
 
   // 동적 어휘 매핑 사전 (중1 교육과정 중심)
   const dict: Record<string, { english: string; example: string; category: string }> = {
+    // 환경 / 자연 / 지구 / 보호
+    환경보호: { english: "protecting the environment", example: "for environmental protection", category: "environment" },
+    환경: { english: "the environment", example: "protect the environment (환경을 보호하다)", category: "environment" },
+    매연: { english: "smoke / exhaust fumes", example: "emit harmful smoke (해로운 매연을 내뿜다)", category: "environment" },
+    공장: { english: "factory", example: "at the factory (공장에서)", category: "environment" },
+    내뿜: { english: "emit / produce", example: "Factories emit smoke.", category: "environment" },
+    인스턴트: { english: "instant food", example: "stop eating instant food (인스턴트 음식을 끊다)", category: "food" },
+    지구: { english: "the Earth / our planet", example: "save our Earth (우리의 지구를 구하다)", category: "environment" },
+    쓰레기: { english: "trash / garbage", example: "reduce trash (쓰레기를 줄이다)", category: "environment" },
+    플라스틱: { english: "plastic", example: "recycle plastic (플라스틱을 재활용하다)", category: "environment" },
+    자연: { english: "nature", example: "clean nature (깨끗한 자연)", category: "environment" },
+    보호: { english: "protect / save", example: "protect the planet", category: "environment" },
+    줄이: { english: "reduce / cut down on", example: "reduce eating ramen", category: "action" },
+    결심: { english: "decided to / promise", example: "I decided not to eat (먹지 않기로 결심했다)", category: "action" },
+    않: { english: "will not / not do", example: "I will not eat (먹지 않겠다)", category: "action" },
+    안먹: { english: "will not eat", example: "I will not eat instant food.", category: "food" },
+
     // 음식 / 먹거리
     피자: { english: "pizza", example: "eat delicious pizza", category: "food" },
     치킨: { english: "chicken", example: "eat fried chicken", category: "food" },
     떡볶이: { english: "tteokbokki (spicy rice cakes)", example: "eat hot tteokbokki", category: "food" },
-    라면: { english: "ramen / noodles", example: "cook ramen", category: "food" },
+    라면: { english: "ramen / instant noodles", example: "eat ramen", category: "food" },
     빵: { english: "bread / bakery", example: "sweet bread", category: "food" },
     점심: { english: "lunch", example: "have lunch (점심을 먹다)", category: "food" },
     저녁: { english: "dinner", example: "eat dinner with family", category: "food" },
     아침: { english: "breakfast", example: "eat breakfast (아침을 먹다)", category: "food" },
     음식: { english: "food", example: "delicious food (맛있는 음식)", category: "food" },
     맛있: { english: "delicious / tasty", example: "It was really delicious.", category: "food" },
-    먹: { english: "ate (eat의 과거형: 먹었다)", example: "ate with my family", category: "food" },
+    먹: { english: "eat (과거형: ate)", example: "eat with my family", category: "food" },
 
     // 운동 / 스포츠
     축구: { english: "soccer", example: "play soccer (축구를 하다)", category: "sports" },
@@ -262,11 +279,29 @@ function generateFallbackHints(koreanIdea: string, topicTitle?: string) {
   // 동적 문장 패턴 생성 (학생의 소재에 맞춤)
   const sentencePatterns: Array<{ pattern: string; meaning: string }> = [];
 
-  if (matchedCategories.has("food")) {
+  if (matchedCategories.has("environment")) {
     sentencePatterns.push({
-      pattern: "I ate [음식 이름] and it was really [맛/느낌: delicious/spicy].",
-      meaning: "나는 [음식]을 먹었고 그것은 정말 [맛있/매웠]어요.",
+      pattern: "I will not [동사: eat / use] [대상] to protect the environment.",
+      meaning: "나는 환경을 보호하기 위해 [대상]을(를) [먹지/사용하지] 않을 것이다.",
     });
+    sentencePatterns.push({
+      pattern: "Factories emit [매연: smoke], so I decided to [행동].",
+      meaning: "공장에서 [매연]을 내뿜기 때문에, 나는 [행동]하기로 결심했다.",
+    });
+  }
+
+  if (matchedCategories.has("food")) {
+    if (text.includes("않") || text.includes("안먹") || text.includes("줄이")) {
+      sentencePatterns.push({
+        pattern: "I decided not to eat [음식 이름] because of [이유].",
+        meaning: "나는 [이유] 때문에 [음식]을(를) 먹지 않기로 했다.",
+      });
+    } else {
+      sentencePatterns.push({
+        pattern: "I ate [음식 이름] and it was really [맛/느낌: delicious/spicy].",
+        meaning: "나는 [음식]을 먹었고 그것은 정말 [맛있/매웠]어요.",
+      });
+    }
   }
 
   if (matchedCategories.has("sports")) {

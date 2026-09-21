@@ -760,7 +760,14 @@ export const WritingStudio: React.FC<WritingStudioProps> = ({
               </button>
             </div>
 
-            {aiHints && (
+            {loadingHints && (
+              <div className="pt-3 border-t border-[#E5E1D5] flex items-center justify-center space-x-2 py-4 text-xs text-[#4F6839] font-medium bg-[#EBF0E5]/60 rounded-xl border border-[#D5E0CC] animate-pulse">
+                <RefreshCw className="w-4 h-4 animate-spin text-[#889E73]" />
+                <span>내가 쓴 한글 생각에 딱 맞는 맞춤 영단어와 문장 패턴을 분석하고 있어요... 🤖</span>
+              </div>
+            )}
+
+            {!loadingHints && aiHints && (
               <div className="pt-2 border-t border-[#E5E1D5] space-y-3">
                 {aiHints.isAmbiguous ? (
                   <div className="bg-[#FFFBF0] border border-[#F5D8A5] rounded-xl p-4 text-xs space-y-2.5">
